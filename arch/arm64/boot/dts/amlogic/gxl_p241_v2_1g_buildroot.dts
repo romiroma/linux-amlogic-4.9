@@ -63,11 +63,12 @@
 			reg = <0x0 0x05300000 0x0 0x2000000>;
 			no-map;
 		};
-		ion_reserved:linux,ion-dev {
+		fb_reserved:linux,meson-fb {
 			compatible = "shared-dma-pool";
 			reusable;
-			size = <0x0 0x8000000>;
+			size = <0x0 0x1000000>;
 			alignment = <0x0 0x400000>;
+			alloc-ranges = <0x0 0x3f000000 0x0 0x1000000>;
 		};
 		//don't put other dts in front of fb_reserved
 
@@ -87,6 +88,12 @@
 			size = <0x0 0x02400000>;
 			alignment = <0x0 0x400000>;
 		};
+
+		ion_reserved:linux,ion-dev {
+			compatible = "amlogic, idev-mem";
+			size = <0x0 0x1000>;
+		};
+
 		/*  vdin0 CMA pool */
 		//vdin0_cma_reserved:linux,vdin0_cma {
 		//	compatible = "shared-dma-pool";
@@ -106,8 +113,9 @@
 		};
 		/*  POST PROCESS MANAGER */
 		ppmgr_reserved:linux,ppmgr {
-			compatible = "shared-dma-pool";
+			compatible = "amlogic, ppmgr_memory";
 			size = <0x0 0x0>;
+			multi-use;
 		};
 
 		codec_mm_cma:linux,codec_mm_cma {
@@ -134,15 +142,6 @@
 	};
 
 	vpu {
-		compatible = "amlogic, vpu";
-		dev_name = "vpu";
-		status = "ok";
-		clocks = <&clkc CLKID_VPU_MUX
-			&clkc CLKID_VAPB_MUX
-			&clkc CLKID_VPU_INTR>;
-		clock-names = "vpu_clk",
-			"vapb_clk",
-			"vpu_intr";
 		clk_level = <2>;
 		/* 0: 100.0M    1: 166.7M    2: 200.0M    3: 250.0M */
 		/* 4: 333.3M    5: 400.0M    6: 500.0M    7: 666.7M */
@@ -638,8 +637,6 @@
 		compatible = "amlogic, vdac";
 		dev_name = "vdac";
 		status = "okay";
-		clocks = <&clkc CLKID_DAC_CLK>;
-		clock-names = "vdac_clk";
 	};
 
 	cvbsout {
@@ -699,7 +696,7 @@
 		arc_port_mask = <0x0>;
 		interrupts = <0 199 1>;
 		interrupt-names = "hdmi_aocec";
-		pinctrl-names = "hdmitx_aocec";
+		pinctrl-names = "default";
 		pinctrl-0=<&hdmitx_aocec>;
 		reg = <0x0 0xc810023c 0x0 0x4
 		       0x0 0xc8100000 0x0 0x200>;
@@ -789,7 +786,7 @@
 	};
 
 	meson-fb {
-		compatible = "amlogic, meson-fb";
+		compatible = "amlogic, meson-gxl";
 		dev_name = "meson-fb";
 		status = "okay";
 		interrupts = <0 3 1
@@ -806,14 +803,14 @@
 		logo_addr = "0x3f000000";
 	};
 	ge2d {
-		compatible = "amlogic, ge2d";
+		compatible = "amlogic, ge2d-gxl";
 		dev_name = "ge2d";
 		status = "okay";
 		interrupts = <0 150 1>;
 		interrupt-names = "ge2d";
 		clocks = <&clkc CLKID_VAPB_MUX>,
-			<&clkc CLKID_GE2D_GATE>,
-			<&clkc CLKID_G2D>;
+			<&clkc CLKID_G2D>,
+			<&clkc CLKID_GE2D_GATE>;
 		clock-names = "clk_vapb_0",
 			"clk_ge2d",
 			"clk_ge2d_gate";
@@ -859,7 +856,7 @@
 		#sound-dai-cells = <0>;
 		compatible = "aml, aml_snd_dmic";
 		reg = <0x0 0xd0042000 0x0 0x2000>;
-		status = "disabled";
+		status = "okay";
 		resets = <
 			&clkc CLKID_PDM_GATE
 		>;
