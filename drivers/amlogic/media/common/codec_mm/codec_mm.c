@@ -56,7 +56,7 @@
 #define MM_ALIGN_UP2N(addr, alg2n) ((addr+(1<<alg2n)-1)&(~((1<<alg2n)-1)))
 
 #define RES_IS_MAPED
-#define DEFAULT_TVP_SIZE_FOR_4K (256 * SZ_1M)
+#define DEFAULT_TVP_SIZE_FOR_4K (192 * SZ_1M)
 #define DEFAULT_TVP_SIZE_FOR_NO4K (160 * SZ_1M)
 
 #define ALLOC_MAX_RETRY 1
@@ -137,6 +137,7 @@ struct codec_mm_mgt_s {
 	int alloced_sys_size;
 	int alloced_for_sc_size;
 	int alloced_for_sc_cnt;
+	int alloced_from_coherent;
 
 	int alloc_from_sys_pages_max;
 	int enable_kmalloc_on_nomem;
@@ -1219,9 +1220,9 @@ static int dump_mem_infos(void *buf, int size)
 			atomic_read(&mem->use_cnt)
 			);
 		s += snprintf(pbuf + s, size - tsize,
-			"flags=%d,used:%lld ms\n",
-			mem->flags,
-			(get_jiffies_64() - mem->alloced_jiffies) * 100/HZ);
+			"flags=%d,used:%u ms\n",
+			mem->flags, jiffies_to_msecs(get_jiffies_64() -
+			mem->alloced_jiffies));
 
 		tsize += s;
 		if (buf) {
@@ -1351,6 +1352,83 @@ int codec_mm_get_reserved_size(void)
 	return mgt->total_reserved_size;
 }
 EXPORT_SYMBOL(codec_mm_get_reserved_size);
+
+struct device *v4l_get_dev_from_codec_mm(void)
+{
+	struct codec_mm_mgt_s *mgt = get_mem_mgt();
+
+	return mgt->dev;
+}
+EXPORT_SYMBOL(v4l_get_dev_from_codec_mm);
+
+struct codec_mm_s *v4l_reqbufs_from_codec_mm(const char *owner,
+	unsigned int addr, unsigned int size, unsigned int index)
+{
+	unsigned long flags;
+	struct codec_mm_mgt_s *mgt = get_mem_mgt();
+	struct codec_mm_s *mem = NULL;
+	int buf_size = PAGE_ALIGN(size);
+
+	mem = kzalloc(sizeof(struct codec_mm_s), GFP_KERNEL);
+	if (IS_ERR_OR_NULL(mem))
+		goto out;
+
+	mem->owner[0]    = owner;
+	mem->mem_handle  = NULL;
+	mem->buffer_size = buf_size;
+	mem->page_count  = buf_size / PAGE_SIZE;
+	mem->phy_addr    = addr;
+	mem->ins_buffer_id = index;
+	mem->alloced_jiffies = get_jiffies_64();
+	mem->from_flags
+		= AMPORTS_MEM_FLAGS_FROM_GET_FROM_COHERENT;
+
+	spin_lock_irqsave(&mgt->lock, flags);
+
+	mem->mem_id = mgt->global_memid++;
+	mgt->alloced_from_coherent += buf_size;
+	mgt->total_alloced_size += buf_size;
+	mgt->alloced_cma_size += buf_size;
+	list_add_tail(&mem->list, &mgt->mem_list);
+
+	spin_unlock_irqrestore(&mgt->lock, flags);
+
+	if (debug_mode & 0x20)
+		pr_info("%s alloc coherent size %d at %lx from %d.\n",
+			owner, buf_size, mem->phy_addr, mem->from_flags);
+out:
+	return mem;
+}
+EXPORT_SYMBOL(v4l_reqbufs_from_codec_mm);
+
+void v4l_freebufs_back_to_codec_mm(const char *owner, struct codec_mm_s *mem)
+{
+	unsigned long flags;
+	struct codec_mm_mgt_s *mgt = get_mem_mgt();
+
+	if (IS_ERR_OR_NULL(mem))
+		return;
+
+	if (!mem->owner[0] || strcmp(owner, mem->owner[0]) ||
+		!mem->buffer_size)
+		goto out;
+
+	spin_lock_irqsave(&mgt->lock, flags);
+
+	mgt->alloced_from_coherent -= mem->buffer_size;
+	mgt->total_alloced_size -= mem->buffer_size;
+	mgt->alloced_cma_size -= mem->buffer_size;
+	list_del(&mem->list);
+
+	spin_unlock_irqrestore(&mgt->lock, flags);
+
+	if (debug_mode & 0x20)
+		pr_info("%s free mem size %d at %lx from %d\n", mem->owner[0],
+			mem->buffer_size, mem->phy_addr, mem->from_flags);
+out:
+	kfree(mem);
+}
+EXPORT_SYMBOL(v4l_freebufs_back_to_codec_mm);
 
 /*
  *with_wait:
@@ -1857,7 +1935,7 @@ int codec_mm_trigger_help_fun(const char *trigger, int id, char *sbuf, int size)
 	void *buf, *getbuf = NULL;
 
 	if (size < PAGE_SIZE) {
-		void *getbuf = (void *)__get_free_page(GFP_KERNEL);
+		getbuf = (void *)__get_free_page(GFP_KERNEL);
 
 		if (!getbuf)
 			return -ENOMEM;
@@ -1880,7 +1958,7 @@ int codec_mm_trigger_help_fun(const char *trigger, int id, char *sbuf, int size)
 		ret = -1;
 	}
 	if (ret > 0 && getbuf != NULL) {
-		int ret = min_t(int, ret, size);
+		ret = min_t(int, ret, size);
 
 		strncpy(sbuf, buf, ret);
 	}
@@ -1916,7 +1994,7 @@ static int codec_mm_probe(struct platform_device *pdev)
 	if (r == 0)
 		pr_debug("codec_mm reserved memory probed done\n");
 
-	pr_debug("codec_mm_probe ok\n");
+	pr_info("codec_mm_probe ok\n");
 
 	codec_mm_scatter_mgt_init();
 	codec_mm_keeper_mgr_init();

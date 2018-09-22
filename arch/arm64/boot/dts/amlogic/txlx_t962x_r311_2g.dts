@@ -466,6 +466,9 @@
 		//		"clk_aud_out";
 		hdmirx_id = <0>;
 		en_4k_2_2k = <0>;
+		hpd_low_cec_off = <1>;
+		/* bit4: enable feature, bit3~0: port number */
+		disable_port = <0x0>;
 		reg = <0x0 0xffd26000 0x0 0xa00000
 			0x0 0xff63C000 0x0 0x2000
 			0x0 0xffe0d000 0x0 0x2000
@@ -481,7 +484,9 @@
 		dev_name = "vdin0";
 		status = "okay";
 		reserve-iomap = "true";
-		flag_cma = <1>;/*1:share with codec_mm;2:cma alone*/
+		/*bit0:(1:share with codec_mm;0:cma alone)*/
+		/*bit8:(1:alloc in discontinus way;0:alone in continuous way)*/
+		flag_cma = <0x101>;
 		/* MByte, if 10bit disable: 64M(YUV422),
 		 * if 10bit enable: 64*1.5 = 96M(YUV422)
 		 * if support 4K2K-YUV444-10bit-WR:3840*2160*4*4 ~= 128M
@@ -503,8 +508,10 @@
 		 * bit2:support 10bit
 		 * bit3:support 12bit
 		 * bit4:support yuv422 10bit full pack mode (from txl new add)
+		 * bit8:use 8bit  at 4k_50/60hz_10bit
+		 * bit9:use 10bit at 4k_50/60hz_10bit
 		 */
-		tv_bit_mode = <21>;
+		tv_bit_mode = <0x215>;
 	};
 
 	vdin1 {
@@ -594,18 +601,30 @@
 		interrupt-names = "mailbox_2";
 	};
 
-	aml_atvdemod {
-		compatible = "amlogic, aml_atvdemod";
-		dev_name = "aml_atvdemod";
+	tuner: tuner {
 		status = "okay";
-		tuner = "mxl661_tuner";
-		tuner_i2c_ada_id = <&i2c1>;
+		tuner_name = "mxl661_tuner";
+		tuner_i2c_adap = <&i2c1>;
 		tuner_i2c_addr = <0x60>;
+		tuner_xtal = <0>; /* 0: 16MHz, 1: 24MHz */
+		tuner_xtal_mode = <0>;
+					/* NO_SHARE_XTAL(0)
+					 * SLAVE_XTAL_SHARE(1)
+					 */
+		tuner_xtal_cap = <30>; /* when tuner_xtal_mode = 1, set 25 */
+	};
+
+	atv-demod {
+		compatible = "amlogic, atv-demod";
+		status = "okay";
+		tuner = <&tuner>;
 		btsc_sap_mode = <1>;
-		////pinctrl-names="atvdemod_agc";
-		////pinctrl-0=<&atvdemod_agc>;
-		reg = <0x0 0xff640000 0x0 0x2000
-				0x0 0xff648000 0x0 0x2000>;
+		/* pinctrl-names="atvdemod_agc_pins"; */
+		/* pinctrl-0=<&atvdemod_agc_pins>; */
+		reg = <0x0 0xff640000 0x0 0x2000 /* demod reg */
+				0x0 0xff63c000 0x0 0x2000 /* hiu reg */
+				0x0 0xff634000 0x0 0x2000 /* periphs reg */
+				0x0 0xff648000 0x0 0x2000>; /* audio reg */
 		reg_23cf = <0x88188832>;
 		/*default:0x88188832;r840 on haier:0x48188832*/
 	};
@@ -624,7 +643,7 @@
 		alarm_reg_addr = <0xff8000a8>;
 		timer_e_addr = <0xffd0f188>;
 		init_date = "2015/01/01";
-		status = "disabled";
+		status = "okay";
 	};
 
 	wifi {
@@ -769,7 +788,7 @@
 		compatible = "amlogic, unifykey";
 		status = "okay";
 
-		unifykey-num = <20>;
+		unifykey-num = <21>;
 		unifykey-index-0 = <&keysn_0>;
 		unifykey-index-1 = <&keysn_1>;
 		unifykey-index-2 = <&keysn_2>;
@@ -790,6 +809,7 @@
 		unifykey-index-17 = <&keysn_17>;
 		unifykey-index-18 = <&keysn_18>;
 		unifykey-index-19 = <&keysn_19>;
+		unifykey-index-20 = <&keysn_20>;
 
 		keysn_0: key_0{
 			key-name = "usid";
@@ -896,6 +916,11 @@
 			key-device = "secure";
 			key-permit = "read","write","del";
 		};
+		keysn_20:key_20{
+			key-name = "region_code";
+			key-device = "normal";
+			key-permit = "read","write","del";
+		};
 	}; /* End unifykey */
 
 	vdac {
@@ -985,6 +1010,7 @@
 		pinctrl-2=<&hdmitx_aocecb>;
 		reg = <0x0 0xFF80023c 0x0 0x4
 		       0x0 0xFF800000 0x0 0x400>;
+		reg-names = "ao_exit","ao";
 	};
 
 
@@ -1300,9 +1326,7 @@
 		dev_name = "dvb";
 		status = "okay";
 		fe0_mode = "internal";
-		fe0_tuner = "mxl661_tuner";
-		fe0_i2c_adap_id = <&i2c1>;
-		fe0_tuner_i2c_addr = <0x60>;
+		fe0_tuner = <&tuner>;
 		/*"parallel","serial","disable"*/
 		ts2 = "parallel";
 		ts2_control = <0>;
@@ -1448,11 +1472,12 @@
 		drc_enable = <0>;
 		status = "okay";
 	};
-	lcd_extern_i2c {
-		compatible = "amlogic, lcd_i2c_T5800Q";
-		status = "disabled";
-		reg = <0x1c>; /*reg_address for i2c_T5800Q*/
+
+	lcd_extern_i2c0: lcd_extern_i2c@0 {
+		compatible = "lcd_ext, i2c";
 		dev_name = "i2c_T5800Q";
+		reg = <0x1c>;
+		status = "okay";
 	};
 };
 
@@ -1500,6 +1525,18 @@
 		};
 	};
 
+	/*lcd_extern*/
+	lcd_extern_off_pins:lcd_extern_off_pin {
+		mux {
+			pins = "GPIOH_2",
+				"GPIOH_3";
+			function = "gpio_periphs";
+			/*output-high;*/
+			output-low;
+			/*input-enable;*/
+		};
+	};
+
 	/*backlight*/
 	bl_pwm_on_pins:bl_pwm_on_pin {
 		mux {
@@ -1511,6 +1548,13 @@
 		mux {
 			pins = "pwm_vs_z6";
 			function = "pwm_vs";
+		};
+	};
+	bl_pwm_off_pins:bl_pwm_off_pin {
+		mux {
+			pins = "GPIOZ_6";
+			function = "gpio_periphs";
+			output-low;
 		};
 	};
 	bl_pwm_combo_0_on_pins:bl_pwm_combo_0_on_pin {
@@ -1537,18 +1581,12 @@
 			function = "pwm_vs";
 		};
 	};
-
-	/*ldim*/
-	ldim_pwm_pins:ldim_pwm_pin {
+	bl_pwm_combo_off_pins:bl_pwm_combo_off_pin {
 		mux {
-			pins = "pwm_b";
-			function = "pwm_b";
-		};
-	};
-	ldim_pwm_vs_pins:ldim_pwm_vs_pin {
-		mux {
-			pins = "pwm_vs_z6";
-			function = "pwm_vs";
+			pins = "GPIOZ_6",
+				"GPIOZ_7";
+			function = "gpio_periphs";
+			output-low;
 		};
 	};
 };
@@ -1573,18 +1611,10 @@
 	status = "okay";
 };
 
-
-&spicc_a {
-	status = "disabled";
-	pinctrl-names = "default";
-	pinctrl-0 = <&spi_a_pins>;
-	cs-gpios = <&gpio GPIOZ_3 0>;
-};
-
 &spicc0 {
 	status = "okay";
 	pinctrl-names = "default";
 	pinctrl-0 = <&spi_a_pins>;
 	cs-gpios = <&gpio GPIOZ_3 0>;
-	num_chipselect = <1>;
 };
+

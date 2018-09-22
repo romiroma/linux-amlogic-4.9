@@ -186,7 +186,9 @@ static void push_ip(struct page_trace *base, struct page_trace *ip)
 		base[i] = base[i - 1];
 
 	/* debug check */
+#if DEBUG_PAGE_TRACE
 	check_trace_valid(base);
+#endif
 	end = (((unsigned long)trace_buffer) + ptrace_size);
 	WARN_ON((unsigned long)(base + trace_step - 1) >= end);
 
@@ -379,7 +381,7 @@ static void __init find_static_common_symbol(void)
 	for (i = 0; i < COMMON_CALLER_SIZE; i++) {
 		s = &common_func[i];
 		if (!s->name)
-			break;	/* end */
+			break;  /* end */
 		if (s->full_match) {
 			addr = kallsyms_contain_name(s->name, 1, NULL);
 			if (addr)
@@ -451,8 +453,10 @@ unsigned long find_back_trace(void)
 	frame.fp = (unsigned long)__builtin_frame_address(0);
 	frame.sp = current_stack_pointer;
 	frame.pc = _RET_IP_;
+#ifdef CONFIG_ARM64
 #ifdef CONFIG_FUNCTION_GRAPH_TRACER
 	frame.graph = current->curr_ret_stack;
+#endif
 #endif
 	while (1) {
 	#ifdef CONFIG_ARM64
@@ -463,7 +467,7 @@ unsigned long find_back_trace(void)
 		ret = -1;
 	#endif
 		if (ret < 0) {
-			pr_err("%s, can't find back trace\n", __func__);
+			//pr_err("%s, can't find back trace\n", __func__);
 			return 0;
 		}
 		step++;
@@ -555,7 +559,6 @@ unsigned int pack_ip(unsigned long ip, int order, gfp_t flag)
 	}
 
 	trace.ret_ip = (ip - text) >> 2;
-	WARN_ON(trace.ret_ip > IP_RANGE_MASK);
 #ifdef CONFIG_AMLOGIC_CMA
 	if (flag == __GFP_BDEV)
 		trace.migrate_type = MIGRATE_CMA;
@@ -588,9 +591,9 @@ void set_page_trace(struct page *page, int order, gfp_t flag)
 #endif
 		ip = find_back_trace();
 		if (!ip) {
-			pr_err("can't find backtrace for page:%lx\n",
-				page_to_pfn(page));
-			dump_stack();
+			//pr_err("can't find backtrace for page:%lx\n",
+			//	page_to_pfn(page));
+			//dump_stack();
 			return;
 		}
 		val = pack_ip(ip, order, flag);
@@ -1092,6 +1095,9 @@ void __init page_trace_mem_init(void)
 #endif
 
 	find_static_common_symbol();
+#ifdef CONFIG_KASAN	/* open multi_shot for kasan */
+	kasan_save_enable_multi_shot();
+#endif
 #ifdef CONFIG_64BIT
 	/*
 	 * if this compiler error occurs, that means there are over 32 page

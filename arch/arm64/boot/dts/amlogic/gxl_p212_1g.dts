@@ -88,7 +88,7 @@
 		ion_reserved:linux,ion-dev {
 			compatible = "shared-dma-pool";
 			reusable;
-			size = <0x0 0x7C00000>;
+			size = <0x0 0x4C00000>;
 			alignment = <0x0 0x400000>;
 		};
 
@@ -119,7 +119,7 @@
 			compatible = "shared-dma-pool";
 			reusable;
 			/* ion_codec_mm max can alloc size 80M*/
-			size = <0x0 0x13400000>;
+			size = <0x0 0xd000000>;
 			alignment = <0x0 0x400000>;
 			linux,contiguous-region;
 		};
@@ -137,6 +137,16 @@
 			alignment = <0x0 0x100000>;
 			//no-map;
 		};
+	};
+
+	dummy-battery {
+		compatible = "amlogic, dummy-battery";
+		status = "okay";
+	};
+
+	dummy-charger {
+		compatible = "amlogic, dummy-charger";
+		status = "okay";
 	};
 
 	bt-dev{
@@ -639,6 +649,7 @@
 		pinctrl-0=<&hdmitx_aocec>;
 		reg = <0x0 0xc810023c 0x0 0x4
 		       0x0 0xc8100000 0x0 0x200>;
+		reg-names = "ao_exit","ao";
 	};
 
 	sysled {
@@ -733,10 +744,8 @@
 		key_num = <1>;
 		key_name = "power";
 		key_code = <116>;
-		key_pin = <&gpio_ao  GPIOAO_2  GPIO_ACTIVE_HIGH>;
-		interrupts = <0 70 1
-				0 71 2>;
-		interrupt-names = "irq_keyup", "irq_keydown";
+		key-gpios = <&gpio_ao  GPIOAO_2  GPIO_ACTIVE_HIGH>;
+		detect_mode = <0>;/*0:polling mode, 1:irq mode*/
 	};
 	meson-fb {
 		compatible = "amlogic, meson-gxl";
@@ -1087,7 +1096,7 @@
 		compatible = "amlogic, unifykey";
 		status = "ok";
 
-		unifykey-num = <15>;
+		unifykey-num = <16>;
 		unifykey-index-0 = <&keysn_0>;
 		unifykey-index-1 = <&keysn_1>;
 		unifykey-index-2 = <&keysn_2>;
@@ -1103,6 +1112,7 @@
 		unifykey-index-12= <&keysn_12>;
 		unifykey-index-13= <&keysn_13>;
 		unifykey-index-14= <&keysn_14>;
+		unifykey-index-15= <&keysn_15>;
 
 		keysn_0: key_0{
 			key-name = "usid";
@@ -1180,6 +1190,11 @@
 		keysn_14:key_14{
 			key-name = "attestationkeybox";// attestation key
 			key-device = "secure";
+			key-permit = "read","write","del";
+		};
+		keysn_15:key_15{
+			key-name = "region_code";
+			key-device = "normal";
 			key-permit = "read","write","del";
 		};
 	};//End unifykey

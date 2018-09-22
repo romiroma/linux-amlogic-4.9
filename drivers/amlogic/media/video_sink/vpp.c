@@ -1842,7 +1842,8 @@ int vpp_set_super_scaler_regs(int scaler_path_sel,
 }
 
 static void vpp_set_super_scaler(const struct vinfo_s *vinfo,
-			struct vpp_frame_par_s *next_frame_par)
+			struct vpp_frame_par_s *next_frame_par,
+			bool bypass_sr0, bool bypass_sr1)
 {
 	unsigned int hor_sc_multiple_num, ver_sc_multiple_num, temp;
 	u32 width_out = next_frame_par->VPP_hsc_endp -
@@ -1942,12 +1943,12 @@ static void vpp_set_super_scaler(const struct vinfo_s *vinfo,
 		next_frame_par->supsc0_vert_ratio = 0;
 		next_frame_par->supsc1_vert_ratio = 1;
 	}
-	if (bypass_spscl0 || !(sr_support & SUPER_CORE0_SUPPORT)) {
+	if (bypass_sr0 || !(sr_support & SUPER_CORE0_SUPPORT)) {
 		next_frame_par->supsc0_enable = 0;
 		next_frame_par->supsc0_hori_ratio = 0;
 		next_frame_par->supsc0_vert_ratio = 0;
 	}
-	if (bypass_spscl1 || !(sr_support & SUPER_CORE1_SUPPORT)) {
+	if (bypass_sr1 || !(sr_support & SUPER_CORE1_SUPPORT)) {
 		next_frame_par->supsc1_enable = 0;
 		next_frame_par->supsc1_hori_ratio = 0;
 		next_frame_par->supsc1_vert_ratio = 0;
@@ -2339,7 +2340,8 @@ void
 vpp_set_filters(u32 process_3d_type, u32 wide_mode,
 	struct vframe_s *vf,
 	struct vpp_frame_par_s *next_frame_par,
-	const struct vinfo_s *vinfo)
+	const struct vinfo_s *vinfo,
+	bool bypass_sr)
 {
 	u32 src_width = 0;
 	u32 src_height = 0;
@@ -2435,10 +2437,19 @@ vpp_set_filters(u32 process_3d_type, u32 wide_mode,
 	if ((vf->ratio_control & DISP_RATIO_ADAPTED_PICMODE)
 		&& !disable_adapted) {
 		wide_mode = vf->pic_mode.screen_mode;
-		video_source_crop_top = vf->pic_mode.vs;
-		video_source_crop_left = vf->pic_mode.hs;
-		video_source_crop_bottom = vf->pic_mode.ve;
-		video_source_crop_right = vf->pic_mode.he;
+		if (vf->pic_mode.provider == PIC_MODE_PROVIDER_WSS) {
+			/* from wss, need add global setting */
+			video_source_crop_top += vf->pic_mode.vs;
+			video_source_crop_left += vf->pic_mode.hs;
+			video_source_crop_bottom += vf->pic_mode.ve;
+			video_source_crop_right += vf->pic_mode.he;
+		} else {
+			/* from PQ database, final setting */
+			video_source_crop_top = vf->pic_mode.vs;
+			video_source_crop_left = vf->pic_mode.hs;
+			video_source_crop_bottom = vf->pic_mode.ve;
+			video_source_crop_right = vf->pic_mode.he;
+		}
 		if (vf->pic_mode.AFD_enable
 			&& (vf->ratio_control & DISP_RATIO_INFOFRAME_AVAIL))
 			wide_mode = VIDEO_WIDEOPTION_AFD;
@@ -2458,7 +2469,9 @@ vpp_set_filters(u32 process_3d_type, u32 wide_mode,
 		vinfo->width, vinfo->height,
 		vinfo, vpp_flags, next_frame_par, vf);
 	/*config super scaler after set next_frame_par is calc ok for pps*/
-	vpp_set_super_scaler(vinfo, next_frame_par);
+	vpp_set_super_scaler(vinfo, next_frame_par,
+		(bypass_sr | bypass_spscl0),
+		(bypass_sr | bypass_spscl1));
 }
 
 void prot_get_parameter(u32 wide_mode,

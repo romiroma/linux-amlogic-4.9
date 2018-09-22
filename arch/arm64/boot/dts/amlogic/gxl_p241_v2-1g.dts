@@ -51,6 +51,15 @@
 		#size-cells = <2>;
 		ranges;
 		/* global autoconfigured region for contiguous allocations */
+		ramoops@0x07400000 {
+			compatible = "ramoops";
+			reg = <0x0 0x07400000 0x0 0x00100000>;
+			record-size = <0x8000>;
+			console-size = <0x8000>;
+			ftrace-size = <0x0>;
+			pmsg-size = <0x8000>;
+		};
+
 		secmon_reserved:linux,secmon {
 			compatible = "shared-dma-pool";
 			reusable;
@@ -703,6 +712,7 @@
 		pinctrl-0=<&hdmitx_aocec>;
 		reg = <0x0 0xc810023c 0x0 0x4
 		       0x0 0xc8100000 0x0 0x200>;
+		reg-names = "ao_exit","ao";
 	};
 
 	sysled {
@@ -795,10 +805,8 @@
 		key_num = <1>;
 		key_name = "power";
 		key_code = <116>;
-		key_pin = <&gpio_ao  GPIOAO_2  GPIO_ACTIVE_HIGH>;
-		interrupts = <0 70 1
-				0 71 2>;
-		interrupt-names = "irq_keyup", "irq_keydown";
+		key-gpios = <&gpio_ao  GPIOAO_2  GPIO_ACTIVE_HIGH>;
+		detect_mode = <0>;/*0:polling mode, 1:irq mode*/
 	};
 	meson-fb {
 		compatible = "amlogic, meson-gxl";
@@ -1151,7 +1159,7 @@
 		compatible = "amlogic, unifykey";
 		status = "ok";
 
-		unifykey-num = <15>;
+		unifykey-num = <16>;
 		unifykey-index-0 = <&keysn_0>;
 		unifykey-index-1 = <&keysn_1>;
 		unifykey-index-2 = <&keysn_2>;
@@ -1167,6 +1175,7 @@
 		unifykey-index-12= <&keysn_12>;
 		unifykey-index-13= <&keysn_13>;
 		unifykey-index-14= <&keysn_14>;
+		unifykey-index-15= <&keysn_15>;
 
 		keysn_0: key_0{
 			key-name = "usid";
@@ -1244,6 +1253,11 @@
 		keysn_14:key_14{
 			key-name = "attestationkeybox";// attestation key
 			key-device = "secure";
+			key-permit = "read","write","del";
+		};
+		keysn_15:key_15{
+			key-name = "region_code";
+			key-device = "normal";
 			key-permit = "read","write","del";
 		};
 	};//End unifykey

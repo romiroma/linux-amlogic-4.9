@@ -52,6 +52,15 @@
 		#size-cells = <2>;
 		ranges;
 		/* global autoconfigured region for contiguous allocations */
+		ramoops@0x07400000 {
+			compatible = "ramoops";
+			reg = <0x0 0x07400000 0x0 0x00100000>;
+			record-size = <0x8000>;
+			console-size = <0x8000>;
+			ftrace-size = <0x0>;
+			pmsg-size = <0x8000>;
+		};
+
 		secmon_reserved:linux,secmon {
 			compatible = "shared-dma-pool";
 			reusable;
@@ -359,7 +368,8 @@
 		key_num = <1>;
 		key_name = "power";
 		key_code = <116>;
-		key_pin = <&gpio_ao  GPIOAO_3  GPIO_ACTIVE_HIGH>;
+		key-gpios = <&gpio_ao  GPIOAO_3  GPIO_ACTIVE_HIGH>;
+		detect_mode = <0>;/*0:polling mode, 1:irq mode*/
 	};
 
 	adc_keypad {
@@ -702,7 +712,7 @@
 			opp-microvolt = <861000>;
 		};
 		opp10 {
-			opp-hz = /bits/ 64 <1896000000>;
+			opp-hz = /bits/ 64 <1908000000>;
 			opp-microvolt = <981000>;
 		};
 	};
@@ -802,6 +812,13 @@
 		#sound-dai-cells = <0>;
 		reg = <0x19>;
 		differential_pair = <1>;
+		status = "disabled";
+	};
+
+	bl_extern_i2c {
+		compatible = "bl_extern, i2c";
+		dev_name = "lp8556";
+		reg = <0x2c>;
 		status = "disabled";
 	};
 };
@@ -1091,6 +1108,14 @@
 			/*"pdm_din3_a",*/
 			"pdm_dclk_a";
 			function = "pdm";
+		};
+	};
+
+	bl_pwm_off_pins:bl_pwm_off_pin {
+		mux {
+			pins = "GPIOH_5";
+			function = "gpio_periphs";
+			output-high;
 		};
 	};
 

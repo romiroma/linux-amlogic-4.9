@@ -37,16 +37,21 @@ static inline int _aml_rsv_isprotect(void)
 static struct free_node_t *get_free_node(struct mtd_info *mtd)
 {
 	struct aml_nand_chip *aml_chip = mtd_to_nand_chip(mtd);
-	unsigned int index;
+	unsigned long index;
 
 	pr_info("%s %d: bitmap=%llx\n", __func__, __LINE__,
 		aml_chip->freeNodeBitmask);
 
 	index = find_first_zero_bit((void *)&aml_chip->freeNodeBitmask, 64);
-	if (index > RESERVED_BLOCK_NUM)
-		pr_info("%s %d: index=%d is greater than max! error",
-			__func__, __LINE__, index);
-	test_and_set_bit(index, (void *)&aml_chip->freeNodeBitmask);
+	if (index > RESERVED_BLOCK_NUM) {
+		pr_info("%s %d: index is greater than max! error",
+			__func__, __LINE__);
+		return NULL;
+	}
+	if (test_and_set_bit(index, (void *)&aml_chip->freeNodeBitmask)) {
+		pr_info("%s %d: error!!!\n", __func__, __LINE__);
+		return NULL;
+	}
 
 	pr_info("%s %d: bitmap=%llx\n", __func__, __LINE__,
 		aml_chip->freeNodeBitmask);
@@ -68,8 +73,9 @@ static void release_free_node(struct mtd_info *mtd,
 		pr_info("%s %d: index=%d is greater than max! error",
 			__func__, __LINE__, free_node->index);
 
-	test_and_clear_bit(free_node->index,
-		(void *)&aml_chip->freeNodeBitmask);
+	if (test_and_clear_bit(free_node->index,
+		(void *)&aml_chip->freeNodeBitmask))
+		return;
 
 	/*memset zero to protect from dead-loop*/
 	memset(free_node, 0, sizeof(struct free_node_t));
@@ -86,6 +92,12 @@ int aml_nand_rsv_erase_protect(struct mtd_info *mtd, unsigned int block_addr)
 
 	if (!_aml_rsv_isprotect())
 		return 0;
+
+	if (!aml_chip->aml_nandbbt_info)
+		return -1;
+
+	if (!aml_chip->aml_nandkey_info)
+		return -1;
 
 	bbt_start = aml_chip->aml_nandbbt_info->start_block;
 	bbt_end = aml_chip->aml_nandbbt_info->end_block;
@@ -107,18 +119,18 @@ int aml_nand_rsv_erase_protect(struct mtd_info *mtd, unsigned int block_addr)
 				return -1; /*need skip bbt blocks*/
 	}
 #else
-	if (aml_chip->aml_nandkey_info != NULL) {
-		if (aml_chip->aml_nandkey_info->valid)
-			if ((block_addr >= key_start)
-			&& (block_addr < key_end))
-				return -1; /*need skip key blocks*/
-	}
-	if (aml_chip->aml_nandbbt_info != NULL) {
-		if (aml_chip->aml_nandbbt_info->valid)
-			if ((block_addr >= bbt_start)
-			&& (block_addr < bbt_end))
-				return -1; /*need skip bbt blocks*/
-	}
+
+	if (aml_chip->aml_nandkey_info->valid)
+		if ((block_addr >= key_start)
+		&& (block_addr < key_end))
+			return -1; /*need skip key blocks*/
+
+
+	if (aml_chip->aml_nandbbt_info->valid)
+		if ((block_addr >= bbt_start)
+		&& (block_addr < bbt_end))
+			return -1; /*need skip bbt blocks*/
+
 #endif
 	return 0;
 }
@@ -135,8 +147,11 @@ int aml_nand_scan_shipped_bbt(struct mtd_info *mtd)
 	loff_t addr, offset;
 	int  start_blk = 0, total_blk = 0, bad_blk_cnt = 0, phys_erase_shift;
 	int realpage, col0_data = 0, col0_oob = 0, valid_page_num = 1;
-	int col_data_sandisk[6], bad_sandisk_flag = 0;
+	int col_data_sandisk[6] = {0}, bad_sandisk_flag = 0;
 	int i, j;
+
+	if (!mtd->erasesize)
+		return -EINVAL;
 
 	phys_erase_shift = fls(mtd->erasesize) - 1;
 	chip->pagebuf = -1;
@@ -151,7 +166,8 @@ int aml_nand_scan_shipped_bbt(struct mtd_info *mtd)
 		memset(&aml_chip->nand_bbt_info->nand_bbt[0],
 			0, MAX_BAD_BLK_NUM);
 		if (nand_boot_flag)
-			offset = (1024 * mtd->writesize / aml_chip->plane_num);
+			offset =
+			(loff_t)(1024 * mtd->writesize / aml_chip->plane_num);
 		else
 			offset = 0;
 
@@ -309,7 +325,8 @@ int aml_nand_scan_shipped_bbt(struct mtd_info *mtd)
 		}
 
 		if (aml_chip->mfr_type  == NAND_MFR_DOSILICON ||
-		    aml_chip->mfr_type  == NAND_MFR_ATO) {
+		    aml_chip->mfr_type  == NAND_MFR_ATO ||
+			aml_chip->mfr_type  == NAND_MFR_HYNIX) {
 			if (col0_oob != 0xFF) {
 				pr_info("factory Bad blk:%llx blk=%d chip=%d\n",
 				       (uint64_t)addr, start_blk, i);
@@ -381,31 +398,6 @@ int aml_nand_scan_shipped_bbt(struct mtd_info *mtd)
 				break;
 			}
 		}
-
-	if (aml_chip->mfr_type  == NAND_MFR_HYNIX) {
-		if (col0_oob != 0xFF) {
-			pr_info("factory Bad blk:%llx blk=%d chip=%d\n",
-				(uint64_t)addr, start_blk, i);
-		aml_chip->nand_bbt_info->nand_bbt[bad_blk_cnt++] =
-			start_blk|0x8000;
-		aml_chip->block_status[start_blk] = NAND_FACTORY_BAD;
-		/* if  plane 0 is bad block,just set plane 1 to bad */
-		if ((start_blk % 2) == 0) {
-			start_blk += 1;
-			aml_chip->nand_bbt_info->nand_bbt[bad_blk_cnt++] =
-				start_blk|0x8000;
-			aml_chip->block_status[start_blk] = NAND_FACTORY_BAD;
-			pr_info(" pl0 is bad block,just set plane 1 to bad:\n");
-		} else {
-			aml_chip->nand_bbt_info->nand_bbt[bad_blk_cnt++] =
-				(start_blk - 1)|0x8000;
-			aml_chip->block_status[start_blk - 1] =
-				NAND_FACTORY_BAD;
-			pr_info(" pl1 is bad block,just set plane 0 to bad:\n");
-		}
-			break;
-		}
-	}
 	}
 		}
 		/* } */
@@ -993,11 +985,12 @@ int aml_nand_scan_rsv_info(struct mtd_info *mtd,
 	struct oobinfo_t *oobinfo;
 	struct free_node_t *free_node, *tmp_node = NULL;
 	unsigned char oob_buf[sizeof(struct oobinfo_t)];
-	loff_t offset;
+	uint64_t offset;
 	unsigned char *data_buf, good_addr[256] = {0};
 	int start_blk, max_scan_blk, i, k, scan_status = 0, env_status = 0;
 	int phys_erase_shift, pages_per_blk, page_num;
 	int error = 0, ret = 0;
+	uint32_t  remainder;
 
 	data_buf = aml_chip->rsv_data_buf;
 	oobinfo = (struct oobinfo_t *)oob_buf;
@@ -1032,7 +1025,8 @@ RE_RSV_INFO:
 		pr_info("blk check good but read failed: %llx, %d\n",
 			(uint64_t)offset, error);
 		offset += nandrsv_info->size;
-		if ((scan_status++ > 6) || (!(offset % mtd->erasesize))) {
+		div_u64_rem(offset, mtd->erasesize, &remainder);
+		if ((scan_status++ > 6) || (!remainder)) {
 			pr_info("ECC error, scan ONE block exit\n");
 			scan_status = 0;
 			continue;

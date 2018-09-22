@@ -181,6 +181,8 @@ static void hdmitx_late_resume(struct early_suspend *h)
 		hdmitx_device.hpd_state =
 		!!(hdmitx_device.HWOp.CntlMisc(&hdmitx_device,
 		MISC_HPD_GPI_ST, 0));
+
+		pr_info("hdmitx hpd state: %d\n", hdmitx_device.hpd_state);
 		hdmitx_notify_hpd(hdmitx_device.hpd_state);
 
 		/*force to get EDID after resume for Amplifer Power case*/
@@ -194,6 +196,8 @@ static void hdmitx_late_resume(struct early_suspend *h)
 		extcon_set_state_sync(hdmitx_extcon_hdmi, EXTCON_DISP_HDMI,
 			hdmitx_device.hpd_state);
 		extcon_set_state_sync(hdmitx_extcon_power, EXTCON_DISP_HDMI,
+			hdmitx_device.hpd_state);
+		extcon_set_state_sync(hdmitx_extcon_audio, EXTCON_DISP_HDMI,
 			hdmitx_device.hpd_state);
 
 		pr_info("amhdmitx: late resume module %d\n", __LINE__);
@@ -385,9 +389,44 @@ static void hdmi_physcial_size_update(struct hdmitx_dev *hdev)
 
 }
 
+static void hdrinfo_to_vinfo(struct vinfo_s *info, struct hdmitx_dev *hdev)
+{
+	unsigned int i, j;
+
+	info->hdr_info.hdr_support = (hdev->RXCap.hdr_sup_eotf_sdr << 0)
+			| (hdev->RXCap.hdr_sup_eotf_hdr << 1)
+			| (hdev->RXCap.hdr_sup_eotf_smpte_st_2084 << 2)
+			| (hdev->RXCap.hdr_sup_eotf_hlg << 3);
+	for (i = 0; i < 4; i++) {
+		if (hdev->RXCap.hdr_dynamic_info[i].type == 0) {
+			memset(&info->hdr_info.dynamic_info[i],
+				0, sizeof(struct hdr_dynamic));
+			continue;
+		}
+		info->hdr_info.dynamic_info[i].type =
+			hdev->RXCap.hdr_dynamic_info[i].type;
+		info->hdr_info.dynamic_info[i].of_len =
+			hdev->RXCap.hdr_dynamic_info[i].hd_len - 3;
+		info->hdr_info.dynamic_info[i].support_flags =
+			hdev->RXCap.hdr_dynamic_info[i].support_flags;
+
+		for (j = 0; j < hdev->RXCap.hdr_dynamic_info[i].hd_len - 3; j++)
+			info->hdr_info.dynamic_info[i].optional_fields[j] =
+			hdev->RXCap.hdr_dynamic_info[i].optional_fields[j];
+	}
+	info->hdr_info.colorimetry_support =
+		hdev->RXCap.colorimetry_data;
+	info->hdr_info.lumi_max = hdev->RXCap.hdr_lum_max;
+	info->hdr_info.lumi_avg = hdev->RXCap.hdr_lum_avg;
+	info->hdr_info.lumi_min = hdev->RXCap.hdr_lum_min;
+	pr_info(SYS "update rx hdr info %x\n",
+		info->hdr_info.hdr_support);
+}
+
 static int set_disp_mode_auto(void)
 {
 	int ret =  -1;
+
 	struct vinfo_s *info = NULL;
 	struct hdmitx_dev *hdev = &hdmitx_device;
 	struct hdmi_format_para *para = NULL;
@@ -408,19 +447,9 @@ static int set_disp_mode_auto(void)
 
 	if (!((strncmp(info->name, "480cvbs", 7) == 0) ||
 		(strncmp(info->name, "576cvbs", 7) == 0) ||
-		(strncmp(info->name, "null", 4) == 0))) {
-		info->hdr_info.hdr_support = (hdev->RXCap.hdr_sup_eotf_sdr << 0)
-				| (hdev->RXCap.hdr_sup_eotf_hdr << 1)
-				| (hdev->RXCap.hdr_sup_eotf_smpte_st_2084 << 2)
-				| (hdev->RXCap.hdr_sup_eotf_hlg << 3);
-		info->hdr_info.colorimetry_support =
-			hdev->RXCap.colorimetry_data;
-		info->hdr_info.lumi_max = hdev->RXCap.hdr_lum_max;
-		info->hdr_info.lumi_avg = hdev->RXCap.hdr_lum_avg;
-		info->hdr_info.lumi_min = hdev->RXCap.hdr_lum_min;
-		pr_info(SYS "update rx hdr info %x\n",
-			info->hdr_info.hdr_support);
-	}
+		(strncmp(info->name, "null", 4) == 0)))
+		hdrinfo_to_vinfo(info, hdev);
+
 	hdmi_physcial_size_update(hdev);
 
 	/* If info->name equals to cvbs, then set mode to I mode to hdmi
@@ -574,7 +603,10 @@ ssize_t store_attr(struct device *dev,
 
 void setup_attr(const char *buf)
 {
-	store_attr(NULL, NULL, buf, 0);
+	char attr[16] = {0};
+
+	memcpy(attr, buf, sizeof(attr));
+	memcpy(hdmitx_device.fmt_attr, attr, sizeof(hdmitx_device.fmt_attr));
 }
 EXPORT_SYMBOL(setup_attr);
 
@@ -1554,6 +1586,162 @@ static ssize_t show_config(struct device *dev,
 	}
 	pos += snprintf(buf+pos, PAGE_SIZE, "audio config: %s\n", conf);
 
+	switch (hdev->hdmi_audio_off_flag) {
+	case 0:
+		conf = "on";
+		break;
+	case 1:
+		conf = "off";
+		break;
+	default:
+		conf = "none";
+	}
+	pos += snprintf(buf+pos, PAGE_SIZE, "audio on/off: %s\n", conf);
+
+	switch (hdev->tx_aud_src) {
+	case 0:
+		conf = "SPDIF";
+		break;
+	case 1:
+		conf = "I2S";
+		break;
+	default:
+		conf = "none";
+	}
+	pos += snprintf(buf+pos, PAGE_SIZE, "audio source: %s\n", conf);
+
+	switch (hdev->cur_audio_param.type) {
+	case CT_REFER_TO_STREAM:
+		conf = "refer to stream header";
+		break;
+	case CT_PCM:
+		conf = "L-PCM";
+		break;
+	case CT_AC_3:
+		conf = "AC-3";
+		break;
+	case CT_MPEG1:
+		conf = "MPEG1";
+		break;
+	case CT_MP3:
+		conf = "MP3";
+		break;
+	case CT_MPEG2:
+		conf = "MPEG2";
+		break;
+	case CT_AAC:
+		conf = "AAC";
+		break;
+	case CT_DTS:
+		conf = "DTS";
+		break;
+	case CT_ATRAC:
+		conf = "ATRAC";
+		break;
+	case CT_ONE_BIT_AUDIO:
+		conf = "One Bit Audio";
+		break;
+	case CT_DOLBY_D:
+		conf = "Dobly Digital+";
+		break;
+	case CT_DTS_HD:
+		conf = "DTS_HD";
+		break;
+	case CT_MAT:
+		conf = "MAT";
+		break;
+	case CT_DST:
+		conf = "DST";
+		break;
+	case CT_WMA:
+		conf = "WMA";
+		break;
+	default:
+		conf = "MAX";
+	}
+	pos += snprintf(buf+pos, PAGE_SIZE, "audio type: %s\n", conf);
+
+	switch (hdev->cur_audio_param.channel_num) {
+	case CC_REFER_TO_STREAM:
+		conf = "refer to stream header";
+		break;
+	case CC_2CH:
+		conf = "2 channels";
+		break;
+	case CC_3CH:
+		conf = "3 channels";
+		break;
+	case CC_4CH:
+		conf = "4 channels";
+		break;
+	case CC_5CH:
+		conf = "5 channels";
+		break;
+	case CC_6CH:
+		conf = "6 channels";
+		break;
+	case CC_7CH:
+		conf = "7 channels";
+		break;
+	case CC_8CH:
+		conf = "8 channels";
+		break;
+	default:
+		conf = "MAX";
+	}
+	pos += snprintf(buf+pos, PAGE_SIZE, "audio channel num: %s\n", conf);
+
+	switch (hdev->cur_audio_param.sample_rate) {
+	case FS_REFER_TO_STREAM:
+		conf = "refer to stream header";
+		break;
+	case FS_32K:
+		conf = "32kHz";
+		break;
+	case FS_44K1:
+		conf = "44.1kHz";
+		break;
+	case FS_48K:
+		conf = "48kHz";
+		break;
+	case FS_88K2:
+		conf = "88.2kHz";
+		break;
+	case FS_96K:
+		conf = "96kHz";
+		break;
+	case FS_176K4:
+		conf = "176.4kHz";
+		break;
+	case FS_192K:
+		conf = "192kHz";
+		break;
+	case FS_768K:
+		conf = "768kHz";
+		break;
+	default:
+		conf = "MAX";
+	}
+	pos += snprintf(buf+pos, PAGE_SIZE, "audio sample rate: %s\n", conf);
+
+	switch (hdev->cur_audio_param.sample_size) {
+	case SS_REFER_TO_STREAM:
+		conf = "refer to stream header";
+		break;
+	case SS_16BITS:
+		conf = "16bit";
+		break;
+	case SS_20BITS:
+		conf = "20bit";
+		break;
+	case SS_24BITS:
+		conf = "24bit";
+		break;
+	default:
+		conf = "MAX";
+	}
+	pos += snprintf(buf+pos, PAGE_SIZE, "audio sample size: %s\n", conf);
+
 	if (hdev->flag_3dfp)
 		conf = "FramePacking";
 	else if (hdev->flag_3dss)
@@ -2043,7 +2231,7 @@ static ssize_t store_valid_mode(struct device *dev,
 	struct device_attribute *attr, const char *buf, size_t count)
 {
 	memset(cvalid_mode, 0, sizeof(cvalid_mode));
-	memcpy(cvalid_mode, buf, sizeof(cvalid_mode));
+	strncpy(cvalid_mode, buf, sizeof(cvalid_mode));
 	cvalid_mode[31] = '\0';
 	return count;
 }
@@ -2054,27 +2242,47 @@ static ssize_t show_hdr_cap(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
 	int pos = 0;
+	unsigned int i, j;
 	struct rx_cap *pRXCap = &(hdmitx_device.RXCap);
-
-	pos += snprintf(buf + pos, PAGE_SIZE, "Supported EOTF:\n");
-	pos += snprintf(buf + pos, PAGE_SIZE, "    Traditional SDR: %d\n",
+	pos += snprintf(buf + pos, PAGE_SIZE, "HDR Static Metadata:\n");
+	pos += snprintf(buf + pos, PAGE_SIZE, "    Supported EOTF:\n");
+	pos += snprintf(buf + pos, PAGE_SIZE, "        Traditional SDR: %d\n",
 		pRXCap->hdr_sup_eotf_sdr);
-	pos += snprintf(buf + pos, PAGE_SIZE, "    Traditional HDR: %d\n",
+	pos += snprintf(buf + pos, PAGE_SIZE, "        Traditional HDR: %d\n",
 		pRXCap->hdr_sup_eotf_hdr);
-	pos += snprintf(buf + pos, PAGE_SIZE, "    SMPTE ST 2084: %d\n",
+	pos += snprintf(buf + pos, PAGE_SIZE, "        SMPTE ST 2084: %d\n",
 		pRXCap->hdr_sup_eotf_smpte_st_2084);
-	pos += snprintf(buf + pos, PAGE_SIZE, "    Hybrif Log-Gamma: %d\n",
+	pos += snprintf(buf + pos, PAGE_SIZE, "        Hybrif Log-Gamma: %d\n",
 		pRXCap->hdr_sup_eotf_hlg);
-	pos += snprintf(buf + pos, PAGE_SIZE, "Supported SMD type1: %d\n",
+	pos += snprintf(buf + pos, PAGE_SIZE, "    Supported SMD type1: %d\n",
 		pRXCap->hdr_sup_SMD_type1);
-	pos += snprintf(buf + pos, PAGE_SIZE, "Luminance Data\n");
-	pos += snprintf(buf + pos, PAGE_SIZE, "    Max: %d\n",
+	pos += snprintf(buf + pos, PAGE_SIZE, "    Luminance Data\n");
+	pos += snprintf(buf + pos, PAGE_SIZE, "        Max: %d\n",
 		pRXCap->hdr_lum_max);
-	pos += snprintf(buf + pos, PAGE_SIZE, "    Avg: %d\n",
+	pos += snprintf(buf + pos, PAGE_SIZE, "        Avg: %d\n",
 		pRXCap->hdr_lum_avg);
-	pos += snprintf(buf + pos, PAGE_SIZE, "    Min: %d\n",
+	pos += snprintf(buf + pos, PAGE_SIZE, "        Min: %d\n\n",
 		pRXCap->hdr_lum_min);
-	pos += snprintf(buf + pos, PAGE_SIZE, "    colorimetry_data: %x\n",
+	pos += snprintf(buf + pos, PAGE_SIZE, "HDR Dynamic Metadata:");
+
+	for (i = 0; i < 4; i++) {
+		if (pRXCap->hdr_dynamic_info[i].type == 0)
+			continue;
+		pos += snprintf(buf + pos, PAGE_SIZE,
+			"\n    metadata_version: %x\n",
+			pRXCap->hdr_dynamic_info[i].type);
+		pos += snprintf(buf + pos, PAGE_SIZE,
+			"        support_flags: %x\n",
+			pRXCap->hdr_dynamic_info[i].support_flags);
+		pos += snprintf(buf + pos, PAGE_SIZE,
+			"        optional_fields:");
+		for (j = 0; j <
+			(pRXCap->hdr_dynamic_info[i].hd_len - 3); j++)
+			pos += snprintf(buf + pos, PAGE_SIZE, " %x",
+				pRXCap->hdr_dynamic_info[i].optional_fields[j]);
+	}
+
+	pos += snprintf(buf + pos, PAGE_SIZE, "\n\ncolorimetry_data: %x\n",
 		pRXCap->colorimetry_data);
 
 	return pos;
@@ -2897,11 +3105,8 @@ static enum hdmi_audio_fs aud_samp_rate_map(unsigned int rate)
 	int i = 0;
 
 	for (i = 0; i < ARRAY_SIZE(map_fs); i++) {
-		if (map_fs[i].rate == rate) {
-			pr_info(AUD "aout notify rate %d\n",
-				rate);
+		if (map_fs[i].rate == rate)
 			return map_fs[i].fs;
-		}
 	}
 	pr_info(AUD "get FS_MAX\n");
 	return FS_MAX;
@@ -2939,11 +3144,8 @@ static enum hdmi_audio_sampsize aud_size_map(unsigned int bits)
 	int i;
 
 	for (i = 0; i < ARRAY_SIZE(aud_size_map_ss); i++) {
-		if (bits == aud_size_map_ss[i].sample_bits) {
-			pr_info(AUD "aout notify size %d\n",
-				bits);
+		if (bits == aud_size_map_ss[i].sample_bits)
 			return aud_size_map_ss[i].ss;
-		}
 	}
 	pr_info(AUD "get SS_MAX\n");
 	return SS_MAX;
@@ -3010,7 +3212,7 @@ static int hdmitx_notify_callback_a(struct notifier_block *block,
 	}
 	}
 	if (hdmitx_device.audio_param_update_flag == 0)
-		pr_info(AUD "no update\n");
+		;
 	else
 		hdmitx_device.audio_notify_flag = 1;
 
@@ -3085,8 +3287,7 @@ static void hdmitx_hpd_plugin_handler(struct work_struct *work)
 	pr_info(SYS "plugin\n");
 	hdev->hdmitx_event &= ~HDMI_TX_HPD_PLUGIN;
 	/* start reading E-EDID */
-	if (hdev->repeater_tx)
-		rx_repeat_hpd_state(1);
+	rx_repeat_hpd_state(1);
 	hdmitx_get_edid(hdev);
 	hdmi_physcial_size_update(hdev);
 	if (hdev->RXCap.IEEEOUI != 0x000c03)
@@ -3122,9 +3323,12 @@ static void hdmitx_hpd_plugin_handler(struct work_struct *work)
 static void clear_hdr_info(struct hdmitx_dev *hdev)
 {
 	struct vinfo_s *info = hdmitx_get_current_vinfo();
-
+	unsigned int i;
 	if (info) {
 		info->hdr_info.hdr_support = 0;
+		for (i = 0; i < 4; i++)
+			memset(&(info->hdr_info.dynamic_info[i]),
+				0, sizeof(struct hdr_dynamic));
 		info->hdr_info.colorimetry_support = 0;
 		info->hdr_info.lumi_max = 0;
 		info->hdr_info.lumi_avg = 0;
@@ -3175,6 +3379,7 @@ static void hdmitx_hpd_plugout_handler(struct work_struct *work)
 	hdev->hdmitx_event &= ~HDMI_TX_HPD_PLUGOUT;
 	hdev->HWOp.CntlMisc(hdev, MISC_ESM_RESET, 0);
 	clear_hdr_info(hdev);
+	rx_edid_physical_addr(0, 0, 0, 0);
 	hdmitx_edid_clear(hdev);
 	hdmi_physcial_size_update(hdev);
 	hdmitx_edid_ram_buffer_clear(hdev);
@@ -3367,11 +3572,14 @@ static void hdmitx_init_fmt_attr(struct hdmitx_dev *hdev)
 static BLOCKING_NOTIFIER_HEAD(hdmitx_event_notify_list);
 int hdmitx_event_notifier_regist(struct notifier_block *nb)
 {
-	int ret;
+	int ret = 0;
+
+	if (!nb)
+		return ret;
 
 	ret = blocking_notifier_chain_register(&hdmitx_event_notify_list, nb);
 	/* update status when register */
-	if (!ret && nb && nb->notifier_call) {
+	if (!ret && nb->notifier_call) {
 		hdmitx_notify_hpd(hdmitx_device.hpd_state);
 		if (hdmitx_device.physical_addr != 0xffff)
 			hdmitx_event_notify(HDMITX_PHY_ADDR_VALID,
@@ -3773,7 +3981,8 @@ static int amhdmitx_probe(struct platform_device *pdev)
 		DEVICE_NAME);
 	cdev_init(&(hdmitx_device.cdev), &amhdmitx_fops);
 	hdmitx_device.cdev.owner = THIS_MODULE;
-	cdev_add(&(hdmitx_device.cdev), hdmitx_device.hdmitx_id, HDMI_TX_COUNT);
+	r = cdev_add(&(hdmitx_device.cdev), hdmitx_device.hdmitx_id,
+		HDMI_TX_COUNT);
 
 	hdmitx_class = class_create(THIS_MODULE, DEVICE_NAME);
 	if (IS_ERR(hdmitx_class)) {

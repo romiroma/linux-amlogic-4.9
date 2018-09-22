@@ -56,7 +56,7 @@
 static DEFINE_SPINLOCK(reg_rw_lock);
 /* should enable fast switching, since some devices in non-current port */
 /* will suspend because of RxSense = 0, such as xiaomi-mtk box */
-static bool phy_fast_switching = true;
+static bool phy_fast_switching;
 static bool phy_fsm_enhancement = true;
 unsigned int last_clk_rate;
 
@@ -87,6 +87,13 @@ int eq_ref_voltage = 0x1ea;
 int hdcp22_on;
 MODULE_PARM_DESC(hdcp22_on, "\n hdcp22_on\n");
 module_param(hdcp22_on, int, 0664);
+
+/*
+ * hdcp14_key_mode:hdcp1.4 key handle method select
+ * NORMAL_MODE:systemcontrol path
+ * SECURE_MODE:secure OS path
+ */
+int hdcp14_key_mode = NORMAL_MODE;
 
 int aud_ch_map;
 
@@ -262,6 +269,7 @@ unsigned int hdmirx_rd_top(unsigned int addr)
 	ulong flags;
 	int data;
 	unsigned int dev_offset = 0;
+
 	spin_lock_irqsave(&reg_rw_lock, flags);
 	wr_reg(MAP_ADDR_MODULE_TOP, hdmirx_addr_port | dev_offset, addr);
 	wr_reg(MAP_ADDR_MODULE_TOP, hdmirx_addr_port | dev_offset, addr);
@@ -487,7 +495,7 @@ void sec_top_write(unsigned int *addr, unsigned int value)
 {
 	struct arm_smccc_res res;
 
-	arm_smccc_smc(0x8200001e, (unsigned long)(uintptr_t)addr,
+	arm_smccc_smc(HDMIRX_WR_SEC_TOP, (unsigned long)(uintptr_t)addr,
 					value, 0, 0, 0, 0, 0, &res);
 }
 
@@ -498,7 +506,7 @@ unsigned int sec_top_read(unsigned int *addr)
 {
 	struct arm_smccc_res res;
 
-	arm_smccc_smc(0x8200001d, (unsigned long)(uintptr_t)addr,
+	arm_smccc_smc(HDMIRX_RD_SEC_TOP, (unsigned long)(uintptr_t)addr,
 					0, 0, 0, 0, 0, 0, &res);
 
 	return (unsigned int)((res.a0)&0xffffffff);
@@ -511,7 +519,7 @@ void rx_sec_reg_write(unsigned int *addr, unsigned int value)
 {
 	struct arm_smccc_res res;
 
-	arm_smccc_smc(0x8200002f, (unsigned long)(uintptr_t)addr,
+	arm_smccc_smc(HDCP22_RX_ESM_WRITE, (unsigned long)(uintptr_t)addr,
 				value, 0, 0, 0, 0, 0, &res);
 }
 
@@ -522,7 +530,7 @@ unsigned int rx_sec_reg_read(unsigned int *addr)
 {
 	struct arm_smccc_res res;
 
-	arm_smccc_smc(0x8200001f, (unsigned long)(uintptr_t)addr,
+	arm_smccc_smc(HDCP22_RX_ESM_READ, (unsigned long)(uintptr_t)addr,
 					0, 0, 0, 0, 0, 0, &res);
 
 	return (unsigned int)((res.a0)&0xffffffff);
@@ -535,7 +543,22 @@ unsigned int rx_sec_set_duk(void)
 {
 	struct arm_smccc_res res;
 
-	arm_smccc_smc(0x8200002e, 0, 0, 0, 0, 0, 0, 0, &res);
+	arm_smccc_smc(HDCP22_RX_SET_DUK_KEY, 0, 0, 0, 0, 0, 0, 0, &res);
+
+	return (unsigned int)((res.a0)&0xffffffff);
+}
+
+/*
+ * rx_set_hdcp14_secure_key
+ */
+unsigned int rx_set_hdcp14_secure_key(void)
+{
+	struct arm_smccc_res res;
+
+	/* 0x8200002d is the SMC cmd defined in BL31,this CMD
+	 * will call set hdcp1.4 key function
+	 */
+	arm_smccc_smc(HDCP14_RX_SETKEY, 0, 0, 0, 0, 0, 0, 0, &res);
 
 	return (unsigned int)((res.a0)&0xffffffff);
 }
@@ -563,6 +586,26 @@ void hdmirx_wr_ctl_port(unsigned int offset, unsigned int data)
 }
 
 /*
+ * hdmirx_top_sw_reset
+ */
+void hdmirx_top_sw_reset(void)
+{
+	ulong flags;
+	unsigned long dev_offset = 0;
+
+	spin_lock_irqsave(&reg_rw_lock, flags);
+	wr_reg(MAP_ADDR_MODULE_TOP,
+		hdmirx_addr_port | dev_offset, TOP_SW_RESET);
+	wr_reg(MAP_ADDR_MODULE_TOP,
+		hdmirx_data_port | dev_offset, 1);
+	udelay(1);
+	wr_reg(MAP_ADDR_MODULE_TOP,
+		hdmirx_addr_port | dev_offset, TOP_SW_RESET);
+	wr_reg(MAP_ADDR_MODULE_TOP, hdmirx_data_port | dev_offset, 0);
+	spin_unlock_irqrestore(&reg_rw_lock, flags);
+}
+
+/*
  * rx_irq_en - hdmirx controller irq config
  * @enable - irq set or clear
  */
@@ -571,7 +614,7 @@ void rx_irq_en(bool enable)
 	unsigned int data32 = 0;
 
 	if (enable) {
-		if (is_meson_txlx_cpu()) {
+		if (rx.chip_id == CHIP_ID_TXLX) {
 			data32 |= 1 << 31; /* DRC_CKS_CHG */
 			data32 |= 1 << 30; /* DRC_RCV */
 			data32 |= 0 << 29; /* AUD_TYPE_CHG */
@@ -598,7 +641,7 @@ void rx_irq_en(bool enable)
 			data32 |= 0 << 1; /* PD_FIFO_TH_MAX_PASS */
 			data32 |= 0 << 0; /* PD_FIFO_TH_MIN_PASS */
 			data32 |= pdec_ists_en;
-		} else if (is_meson_txhd_cpu()) {
+		} else if (rx.chip_id == CHIP_ID_TXHD) {
 			/* data32 |= 1 << 31;  DRC_CKS_CHG */
 			/* data32 |= 1 << 30; DRC_RCV */
 			data32 |= 0 << 29; /* AUD_TYPE_CHG */
@@ -739,6 +782,8 @@ void rx_get_audinfo(struct aud_info_s *audio_info)
 void rx_get_audio_status(struct rx_audio_stat_s *aud_sts)
 {
 	if ((rx.state == FSM_SIG_READY) &&
+		(rx.pre.sw_vic != HDMI_UNKNOWN) &&
+		(rx.pre.sw_vic != HDMI_UNSUPPORT) &&
 		(rx.avmute_skip == 0)) {
 		aud_sts->aud_rcv_flag =
 			(rx.aud_info.aud_packet_received == 0) ? false : true;
@@ -777,7 +822,7 @@ unsigned int rx_get_hpd_sts(void)
  */
 unsigned int rx_get_scdc_clkrate_sts(void)
 {
-	if (is_meson_txhd_cpu())
+	if (rx.chip_id == CHIP_ID_TXHD)
 		return 0;
 	else
 		return (hdmirx_rd_dwc(DWC_SCDC_REGS0) >> 17) & 1;
@@ -859,7 +904,7 @@ int hdmirx_control_clk_range(unsigned long min, unsigned long max)
  */
 void set_scdc_cfg(int hpdlow, int pwrprovided)
 {
-	if (is_meson_txhd_cpu())
+	if (rx.chip_id == CHIP_ID_TXHD)
 		return;
 
 	hdmirx_wr_dwc(DWC_SCDC_CONFIG,
@@ -969,7 +1014,7 @@ static int TOP_init(void)
 	data32 |= 0	<< 0;
 	hdmirx_wr_top(TOP_VID_CNTL,	data32);
 
-	if (!is_meson_txhd_cpu()) {
+	if (rx.chip_id != CHIP_ID_TXHD) {
 		data32 = 0;
 		data32 |= 0	<< 20;
 		data32 |= 0	<< 8;
@@ -980,6 +1025,16 @@ static int TOP_init(void)
 	/* delay cycles before n/cts update pulse */
 	data32 |= 7 << 0;
 	hdmirx_wr_top(TOP_ACR_CNTL2, data32);
+
+	data32 = 0;
+	/* bit4: hpd override, bit5: hpd reverse */
+	data32 |= 1 << 4;
+	if (rx.chip_id == CHIP_ID_GXTVBB)
+		data32 |= 0 << 5;
+	else
+		data32 |= 1 << 5;
+	/* pull down all the hpd */
+	hdmirx_wr_top(TOP_HPD_PWR5V, data32);
 	return err;
 }
 
@@ -1069,23 +1124,45 @@ static int DWC_init(void)
 	data32 |= (HYST_DVI_TO_HDMI	<< 8);
 	data32 |= (0	<< 6);
 	data32 |= (0	<< 4);
-	data32 |= (0	<< 2);
+	/* Force OESS mode to fix Google Chromecast box black screen issue */
+	data32 |= (1	<< 2);
 	data32 |= (0	<< 0);
 	hdmirx_wr_dwc(DWC_HDMI_MODE_RECOVER, data32);
 
 	return err;
 }
 
+void rx_hdcp14_set_normal_key(const struct hdmi_rx_hdcp *hdcp)
+{
+	unsigned int i = 0;
+	unsigned int k = 0;
+	int error = 0;
+
+	for (i = 0; i < HDCP_KEYS_SIZE; i += 2) {
+		for (k = 0; k < HDCP_KEY_WR_TRIES; k++) {
+			if (hdmirx_rd_bits_dwc(DWC_HDCP_STS,
+				HDCP_KEY_WR_OK_STS) != 0) {
+				break;
+			}
+		}
+		if (k < HDCP_KEY_WR_TRIES) {
+			hdmirx_wr_dwc(DWC_HDCP_KEY1, hdcp->keys[i + 0]);
+			hdmirx_wr_dwc(DWC_HDCP_KEY0, hdcp->keys[i + 1]);
+		} else {
+			error = -EAGAIN;
+			break;
+		}
+	}
+	hdmirx_wr_dwc(DWC_HDCP_BKSV1, hdcp->bksv[0]);
+	hdmirx_wr_dwc(DWC_HDCP_BKSV0, hdcp->bksv[1]);
+}
 /*
  * hdmi_rx_ctrl_hdcp_config - config hdcp1.4 keys
  */
 void rx_hdcp14_config(const struct hdmi_rx_hdcp *hdcp)
 {
-	int error = 0;
-	unsigned int i = 0;
-	unsigned int k = 0;
-
 	unsigned int data32 = 0;
+
 	/* I2C_SPIKE_SUPPR */
 	data32 |= 1 << 16;
 	/* FAST_I2C */
@@ -1109,25 +1186,14 @@ void rx_hdcp14_config(const struct hdmi_rx_hdcp *hdcp)
 	/* hdmirx_wr_bits_dwc(ctx, DWC_HDCP_CTRL, KEY_DECRYPT_ENABLE, 1); */
 	hdmirx_wr_bits_dwc(DWC_HDCP_CTRL, KEY_DECRYPT_ENABLE, 0);
 	hdmirx_wr_dwc(DWC_HDCP_SEED, hdcp->seed);
-	for (i = 0; i < HDCP_KEYS_SIZE; i += 2) {
-
-		for (k = 0; k < HDCP_KEY_WR_TRIES; k++) {
-			if (hdmirx_rd_bits_dwc(DWC_HDCP_STS,
-				HDCP_KEY_WR_OK_STS) != 0) {
-				break;
-			}
-		}
-		if (k < HDCP_KEY_WR_TRIES) {
-			hdmirx_wr_dwc(DWC_HDCP_KEY1, hdcp->keys[i + 0]);
-			hdmirx_wr_dwc(DWC_HDCP_KEY0, hdcp->keys[i + 1]);
-		} else {
-			error = -EAGAIN;
-			break;
-		}
+	if (hdcp14_key_mode == SECURE_MODE) {
+		rx_set_hdcp14_secure_key();
+		rx_pr("hdcp1.4 secure mode\n");
+	} else {
+		rx_hdcp14_set_normal_key(&rx.hdcp);
+		rx_pr("hdcp1.4 normal mode\n");
 	}
-	hdmirx_wr_dwc(DWC_HDCP_BKSV1, hdcp->bksv[0]);
-	hdmirx_wr_dwc(DWC_HDCP_BKSV0, hdcp->bksv[1]);
-	if (!is_meson_txhd_cpu()) {
+	if (rx.chip_id != CHIP_ID_TXHD) {
 		hdmirx_wr_bits_dwc(DWC_HDCP_RPT_CTRL,
 			REPEATER, hdcp->repeat ? 1 : 0);
 		/* nothing attached downstream */
@@ -1136,18 +1202,62 @@ void rx_hdcp14_config(const struct hdmi_rx_hdcp *hdcp)
 	hdmirx_wr_bits_dwc(DWC_HDCP_CTRL, ENCRIPTION_ENABLE, 1);
 }
 
-void rx_set_hpd(bool en)
+void rx_set_term_enable(bool enable)
 {
-	if (en) {
-		hdmirx_wr_top(TOP_HPD_PWR5V,
-			hdmirx_rd_top(TOP_HPD_PWR5V)&(~(1<<rx.port)));
-	} else {
-		hdmirx_wr_top(TOP_HPD_PWR5V,
-			hdmirx_rd_top(TOP_HPD_PWR5V)|(1<<rx.port));
-	}
+	hdmirx_wr_bits_phy(PHY_MAIN_FSM_OVERRIDE1, PHY_TERM_OVERRIDE, enable);
+}
+
+void rx_set_term_value(unsigned char port, bool value)
+{
+	if (port < E_PORT_NUM) {
+		if (value)
+			hdmirx_wr_bits_phy(PHY_MAIN_FSM_OVERRIDE1,
+				_BIT(port + 4), 1);
+		else
+			hdmirx_wr_bits_phy(PHY_MAIN_FSM_OVERRIDE1,
+				_BIT(port + 4), 0);
+	} else if (port == ALL_PORTS) {
+		if (value)
+			hdmirx_wr_bits_phy(PHY_MAIN_FSM_OVERRIDE1,
+				PHY_TERM_OV_VALUE, 0xF);
+		else
+			hdmirx_wr_bits_phy(PHY_MAIN_FSM_OVERRIDE1,
+				PHY_TERM_OV_VALUE, 0);
+	} else
+		rx_pr("%s port num overflow\n", __func__);
+
+}
+
+int rx_set_port_hpd(uint8_t port_id, bool val)
+{
+	if (port_id < E_PORT_NUM) {
+		if (val) {
+			hdmirx_wr_bits_top(TOP_HPD_PWR5V, _BIT(port_id), 1);
+			rx_set_term_value(port_id, 1);
+		} else {
+			hdmirx_wr_bits_top(TOP_HPD_PWR5V, _BIT(port_id), 0);
+			rx_set_term_value(port_id, 0);
+		}
+	} else if (port_id == ALL_PORTS) {
+		if (val) {
+			hdmirx_wr_bits_top(TOP_HPD_PWR5V, MSK(4, 0), 0xF);
+			rx_set_term_value(port_id, 1);
+		} else {
+			hdmirx_wr_bits_top(TOP_HPD_PWR5V, MSK(4, 0), 0x0);
+			rx_set_term_value(port_id, 0);
+		}
+	} else
+		return -1;
+
 	if (log_level & LOG_EN)
 		rx_pr("%s, port:%d, val:%d\n", __func__,
-						rx.port, en);
+						port_id, val);
+	return 0;
+}
+
+void rx_set_cur_hpd(uint8_t val)
+{
+	rx_set_port_hpd(rx.port, val);
 }
 
 /*
@@ -1156,10 +1266,52 @@ void rx_set_hpd(bool en)
  */
 void rx_force_hpd_cfg(uint8_t hpd_level)
 {
-	if (hpd_level)
-		hdmirx_wr_top(TOP_HPD_PWR5V, 0x10);
-	else
-		hdmirx_wr_top(TOP_HPD_PWR5V, 0x1f);
+	unsigned int hpd_value;
+
+	if (hpd_level) {
+		if (disable_port_en)
+			hpd_value = (~(1 << disable_port_num)) & 0xF;
+		else
+			hpd_value = 0xF;
+
+		hdmirx_wr_bits_top(TOP_HPD_PWR5V,
+			MSK(4, 0), hpd_value);
+	} else
+		hdmirx_wr_bits_top(TOP_HPD_PWR5V, MSK(4, 0), 0x0);
+}
+
+/*
+ * rx_force_rxsense_cfg - force config rxsense level on all ports
+ * @level: rxsense level
+ */
+void rx_force_rxsense_cfg(uint8_t level)
+{
+	unsigned int term_ovr_value;
+
+	if (level) {
+		if (disable_port_en)
+			term_ovr_value = (~(1 << disable_port_num)) & 0xF;
+		else
+			term_ovr_value = 0xF;
+
+		hdmirx_wr_bits_phy(PHY_MAIN_FSM_OVERRIDE1,
+			PHY_TERM_OV_VALUE, term_ovr_value);
+	} else
+		hdmirx_wr_bits_phy(PHY_MAIN_FSM_OVERRIDE1,
+			PHY_TERM_OV_VALUE, 0x0);
+}
+
+/*
+ * rx_force_hpd_rxsense_cfg - force config
+ * hpd & rxsense level on all ports
+ * @level: hpd & rxsense level
+ */
+void rx_force_hpd_rxsense_cfg(uint8_t level)
+{
+	rx_force_hpd_cfg(level);
+	rx_force_rxsense_cfg(level);
+	if (log_level & LOG_EN)
+		rx_pr("hpd & rxsense force val:%d\n", level);
 }
 
 /*
@@ -1168,6 +1320,9 @@ void rx_force_hpd_cfg(uint8_t hpd_level)
 void control_reset(void)
 {
 	unsigned long data32;
+
+	/* disable functional modules */
+	hdmirx_top_sw_reset();
 
 	/* Enable functional modules */
 	data32  = 0;
@@ -1270,7 +1425,7 @@ void hdcp22_suspend(void)
 	hdcp22_clk_en(0);
 	/* note: can't pull down hpd before enter suspend */
 	/* it will stop cec wake up func if EE domain still working */
-	/* rx_set_hpd(0); */
+	/* rx_set_cur_hpd(0); */
 	hpd_to_esm = 0;
 	hdmirx_wr_dwc(DWC_HDCP22_CONTROL,
 				0x0);
@@ -1300,7 +1455,7 @@ void hdcp22_resume(void)
 	/* dont need to delay 900ms to wait sysctl start hdcp_rx22,*/
 	/*sysctl is userspace it wakes up later than driver */
 	/* mdelay(900); */
-	/* rx_set_hpd(1); */
+	/* rx_set_cur_hpd(1); */
 	rx_pr("hdcp22 on\n");
 }
 
@@ -1354,7 +1509,8 @@ void clk_init(void)
 	data32 |= 2	<< 0;
 	wr_reg_hhi(HHI_HDMIRX_AUD_CLK_CNTL, data32);
 	#endif
-	if (is_meson_txlx_cpu() || is_meson_txhd_cpu())  {
+	if ((rx.chip_id == CHIP_ID_TXLX) ||
+		(rx.chip_id == CHIP_ID_TXHD)) {
 		/* [15] hdmirx_aud_pll4x_en override enable */
 		/* [14] hdmirx_aud_pll4x_en override value */
 		/* [6:5] clk_sel for cts_hdmirx_aud_pll_clk: */
@@ -1561,6 +1717,8 @@ int hdmirx_audio_init(void)
 void hdmirx_phy_init(void)
 {
 	unsigned int data32;
+	unsigned int term_value =
+		hdmirx_rd_top(TOP_HPD_PWR5V);
 
 	data32 = 0;
 	data32 |= 1 << 6;
@@ -1636,11 +1794,11 @@ void hdmirx_phy_init(void)
 	hdmirx_wr_bits_phy(PHY_CDR_CTRL_CNT, CLK_RATE_BIT, 0);
 	last_clk_rate = 0;
 
-	#if 0
-	/* enable all ports's termination*/
+	#if 1
+	/* enable all ports's termination */
 	data32 = 0;
 	data32 |= 1 << 8;
-	data32 |= 0x0f << 4;
+	data32 |= ((term_value & 0xF) << 4);
 	hdmirx_wr_phy(PHY_MAIN_FSM_OVERRIDE1, data32);
 	#endif
 
@@ -1666,7 +1824,7 @@ bool rx_clkrate_monitor(void)
 	int i;
 	int error = 0;
 
-	if (is_meson_txhd_cpu())
+	if (rx.chip_id == CHIP_ID_TXHD)
 		return false;
 
 	if (force_clk_rate & 0x10)
@@ -1733,16 +1891,19 @@ void hdmirx_hw_config(void)
 {
 	rx_pr("%s port:%d\n", __func__, rx.port);
 	control_reset();
-	hdmi_rx_top_edid_update();
+	/* hdmi_rx_top_edid_update(); */
 	rx_hdcp_init();
 	hdmirx_audio_init();
 	packet_init();
-	if (!is_meson_txhd_cpu())
+	if (rx.chip_id != CHIP_ID_TXHD)
 		hdmirx_20_init();
 	DWC_init();
 	hdmirx_irq_hdcp_enable(true);
 	hdmirx_phy_init();
+	hdmirx_wr_top(TOP_INTR_MASKN, top_intr_maskn_value);
 	rx_pr("%s  %d Done!\n", __func__, rx.port);
+	if (rx.chip_id <= CHIP_ID_TXL)
+		cec_hw_reset();
 }
 
 /*
@@ -1754,18 +1915,16 @@ void hdmirx_hw_probe(void)
 	hdmirx_wr_top(TOP_INTR_MASKN, 0);
 	hdmirx_wr_top(TOP_SW_RESET, 0);
 	clk_init();
-	hdmirx_wr_top(TOP_HPD_PWR5V, 0x1f);
-	hdmi_rx_top_edid_update();
 	TOP_init();
 	control_reset();
 	DWC_init();
-
+	hdmi_rx_top_edid_update();
 	/*hdmirx_irq_enable(FALSE);*/
 	/*hdmirx_irq_hdcp22_enable(FALSE);*/
 	hdcp22_clk_en(1);
 	hdmirx_audio_init();
 	packet_init();
-	if (!is_meson_txhd_cpu())
+	if (rx.chip_id != CHIP_ID_TXHD)
 		hdmirx_20_init();
 	hdmirx_phy_init();
 	hdmirx_wr_top(TOP_PORT_SEL, 0x10);
@@ -1849,6 +2008,7 @@ bool is_aud_pll_error(void)
 void rx_aud_pll_ctl(bool en)
 {
 	int tmp = 0;
+
 	if (en) {
 		tmp = hdmirx_rd_phy(PHY_MAINFSM_STATUS1);
 		wr_reg_hhi(HHI_AUD_PLL_CNTL, 0x20000000);
@@ -2077,6 +2237,7 @@ unsigned int hdmirx_get_clock(int index)
 unsigned int hdmirx_get_tmds_clock(void)
 {
 	uint32_t clk = clk_util_clk_msr(25);
+
 	if (clk == 0) {
 		clk = hdmirx_rd_dwc(DWC_HDMI_CKM_RESULT) & 0xffff;
 		clk = clk * 158000 / 4095 * 1000;
@@ -2158,7 +2319,7 @@ void rx_debug_load22key(void)
 	if (ret == 1) {
 		rx_pr("load 2.2 key\n");
 		sm_pause = 1;
-		rx_set_hpd(0);
+		rx_set_cur_hpd(0);
 		hdcp22_on = 1;
 		hdcp22_kill_esm = 1;
 		while (wait_kill_done_cnt++ < 10) {
@@ -2181,9 +2342,10 @@ void rx_debug_load22key(void)
 			EXTCON_DISP_HDMI, 1);
 		mdelay(100);
 		hdmirx_hw_config();
+		hdmi_rx_top_edid_update();
 		hpd_to_esm = 1;
 		/* mdelay(900); */
-		rx_set_hpd(1);
+		rx_set_cur_hpd(1);
 		sm_pause = 0;
 	}
 }
@@ -2192,6 +2354,7 @@ void rx_debug_loadkey(void)
 {
 	rx_pr("load hdcp key\n");
 	hdmirx_hw_config();
+	hdmi_rx_top_edid_update();
 	pre_port = 0xfe;
 }
 

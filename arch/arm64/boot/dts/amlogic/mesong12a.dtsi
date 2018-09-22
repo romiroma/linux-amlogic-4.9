@@ -26,7 +26,7 @@
 #include <dt-bindings/input/input.h>
 #include <dt-bindings/input/meson_rc.h>
 #include <dt-bindings/phy/phy-amlogic-pcie.h>
-#include "mesong12a-dvalin.dtsi"
+#include "mesong12a-bifrost.dtsi"
 
 / {
 	cpus:cpus {
@@ -158,6 +158,18 @@
 	arm_pmu {
 		compatible = "arm,armv8-pmuv3";
 		interrupts = <0 137 4>;
+		reg = <0x0 0xff634400 0 0x1000>;
+
+		/* addr = base + offset << 2 */
+		sys_cpu_status0_offset = <0xa0>;
+
+		sys_cpu_status0_pmuirq_mask = <0xf>;
+
+		/* default 10ms */
+		relax_timer_ns = <10000000>;
+
+		/* default 10000us */
+		max_wait_cnt = <10000>;
 	};
 
 	gic: interrupt-controller@2c001000 {
@@ -465,7 +477,7 @@
 		cal_b = <424>;
 		cal_c = <3159>;
 		cal_d = <9411>;
-		rtemp = <130000>;
+		rtemp = <115000>;
 		interrupts = <0 35 0>;
 		clocks = <&clkc CLKID_TS_COMP>; /* CLKID_TS_COMP>;*/
 		clock-names = "ts_comp";
@@ -483,7 +495,7 @@
 		cal_b = <424>;
 		cal_c = <3159>;
 		cal_d = <9411>;
-		rtemp = <130000>;
+		rtemp = <115000>;
 		interrupts = <0 36 0>;
 		clocks = <&clkc CLKID_TS_COMP>; /* CLKID_TS_COMP>;*/
 		clock-names = "ts_comp";
@@ -574,7 +586,7 @@
 				status = "disabled";
 				reg = <0x0 0x1f000 0x0 0x20>;
 				interrupts = <GIC_SPI 21 IRQ_TYPE_EDGE_RISING>,
-					<GIC_SPI 47 IRQ_TYPE_EDGE_RISING>;
+					<GIC_SPI 91 IRQ_TYPE_EDGE_RISING>;
 				#address-cells = <1>;
 				#size-cells = <0>;
 				clocks = <&clkc CLKID_I2C>;
@@ -586,7 +598,7 @@
 				status = "disabled";
 				reg = <0x0 0x1e000 0x0 0x20>;
 				interrupts = <GIC_SPI 214 IRQ_TYPE_EDGE_RISING>,
-					<GIC_SPI 48 IRQ_TYPE_EDGE_RISING>;
+					<GIC_SPI 92 IRQ_TYPE_EDGE_RISING>;
 				#address-cells = <1>;
 				#size-cells = <0>;
 				clocks = <&clkc CLKID_I2C>;
@@ -598,7 +610,7 @@
 				status = "disabled";
 				reg = <0x0 0x1d000 0x0 0x20>;
 				interrupts = <GIC_SPI 215 IRQ_TYPE_EDGE_RISING>,
-					<GIC_SPI 49 IRQ_TYPE_EDGE_RISING>;
+					<GIC_SPI 94 IRQ_TYPE_EDGE_RISING>;
 				#address-cells = <1>;
 				#size-cells = <0>;
 				clocks = <&clkc CLKID_I2C>;
@@ -610,7 +622,7 @@
 				status = "disabled";
 				reg = <0x0 0x1c000 0x0 0x20>;
 				interrupts = <GIC_SPI 39 IRQ_TYPE_EDGE_RISING>,
-					<GIC_SPI 50 IRQ_TYPE_EDGE_RISING>;
+					<GIC_SPI 95 IRQ_TYPE_EDGE_RISING>;
 				#address-cells = <1>;
 				#size-cells = <0>;
 				clocks = <&clkc CLKID_I2C>;
@@ -618,38 +630,24 @@
 			};
 
 			spicc0: spi@13000 {
-				compatible = "amlogic, spicc";
-				reg = <0x0 0x13000 0x0 0x40>;
+				compatible = "amlogic,meson-g12a-spicc";
+				reg = <0x0 0x13000 0x0 0x44>;
 				interrupts = <GIC_SPI 81 IRQ_TYPE_LEVEL_HIGH>;
-				clock-names = "spicc_clk";
-				clocks = <&clkc CLKID_SPICC0_COMP>;
-				clk_rate = <666666666>;
-				device_id = <0>;
-				enhance = <1>;
-				ssctl = <0>;
-				dma_tx_threshold = <3>;
-				dma_num_per_read_burst = <13>;
-				dma_auto_param = <1>;
-				delay_control = <0x15>;
+				clocks = <&clkc CLKID_SPICC0>,
+					 <&clkc CLKID_SPICC0_COMP>;
+				clock-names = "core", "comp";
 				#address-cells = <1>;
 				#size-cells = <0>;
 				status = "disabled";
 			};
 
 			spicc1: spi@15000 {
-				compatible = "amlogic, spicc";
-				reg = <0x0 0x15000 0x0 0x40>;
+				compatible = "amlogic,meson-g12a-spicc";
+				reg = <0x0 0x15000 0x0 0x44>;
 				interrupts = <GIC_SPI 90 IRQ_TYPE_LEVEL_HIGH>;
-				clock-names = "spicc_clk";
-				clocks = <&clkc CLKID_SPICC1_COMP>;
-				clk_rate = <666666666>;
-				device_id = <1>;
-				enhance = <1>;
-				ssctl = <0>;
-				dma_tx_threshold = <3>;
-				dma_num_per_read_burst = <13>;
-				dma_auto_param = <1>;
-				delay_control = <0x15>;
+				clocks = <&clkc CLKID_SPICC1>,
+					 <&clkc CLKID_SPICC1_COMP>;
+				clock-names = "core", "comp";
 				#address-cells = <1>;
 				#size-cells = <0>;
 				status = "disabled";
@@ -707,7 +705,8 @@
 				compatible = "amlogic,meson-g12a-i2c";
 				status = "disabled";
 				reg = <0x0 0x05000 0x0 0x20>;
-				interrupts = <GIC_SPI 195 IRQ_TYPE_EDGE_RISING>;
+				interrupts = <GIC_SPI 195 IRQ_TYPE_EDGE_RISING>,
+					<GIC_SPI 201 IRQ_TYPE_EDGE_RISING>;
 				#address-cells = <1>;
 				#size-cells = <0>;
 				clocks = <&clkc CLKID_I2C>;
@@ -1104,7 +1103,9 @@
 		pinctrl-1=<&eecec_b>;
 		pinctrl-2=<&eecec_b>;
 		reg = <0x0 0xFF80023c 0x0 0x4
-		       0x0 0xFF800000 0x0 0x400>;
+		       0x0 0xFF800000 0x0 0x400
+		       0x0 0xFF634400 0x0 0x26>;
+		reg-names = "ao_exit","ao","periphs";
 	};
 
 	/*if you want to use vdin just modify status to "ok"*/
@@ -1266,6 +1267,12 @@
 			"mailbox_2";
 	};
 
+	vcodec_dec {
+		compatible = "amlogic, vcodec-dec";
+		dev_name = "aml-vcodec-dec";
+		status = "okay";
+	};
+
 	amvenc_avc{
 		compatible = "amlogic, amvenc_avc";
 		dev_name = "amvenc_avc";
@@ -1372,9 +1379,28 @@
 		interrupts = <0 190 1>;
 
 		pinctrl-names = "sd_all_pins",
-			"sd_clk_cmd_pins";
+			"sd_clk_cmd_pins",
+			"sd_1bit_pins",
+			"sd_clk_cmd_uart_pins",
+			"sd_1bit_uart_pins",
+			"sd_to_ao_uart_pins",
+			"ao_to_sd_uart_pins",
+			"sd_to_ao_jtag_pins",
+			"ao_to_sd_jtag_pins";
+
 		pinctrl-0 = <&sd_all_pins>;
 		pinctrl-1 = <&sd_clk_cmd_pins>;
+		pinctrl-2 = <&sd_1bit_pins>;
+		pinctrl-3 = <&sd_to_ao_uart_clr_pins
+			&sd_clk_cmd_pins &ao_to_sd_uart_pins>;
+		pinctrl-4 = <&sd_to_ao_uart_clr_pins
+			&sd_1bit_pins &ao_to_sd_uart_pins>;
+		pinctrl-5 = <&sd_all_pins &sd_to_ao_uart_pins>;
+		pinctrl-6 = <&sd_to_ao_uart_clr_pins
+			&ao_to_sd_uart_pins>;
+		pinctrl-7 = <&sd_all_pins &sd_to_ao_uart_pins>;
+		pinctrl-8 = <&sd_to_ao_uart_clr_pins
+			&ao_to_sd_uart_pins>;
 
 		clocks = <&clkc CLKID_SD_EMMC_B>,
 			<&clkc CLKID_SD_EMMC_B_P0_COMP>,
@@ -1406,7 +1432,7 @@
 		status = "disabled";
 		compatible = "amlogic, meson-mmc-g12a";
 		reg = <0x0 0xffe05000 0x0 0x800>;
-		interrupts = <0 190 1>;
+		interrupts = <0 190 4>;
 
 		pinctrl-names = "sd_all_pins",
 			"sd_clk_cmd_pins",
@@ -1620,7 +1646,7 @@
 					type = "hot";
 				};
 				pcritical: trip-point@3 {
-					temperature = <150000>;
+					temperature = <110000>;
 					hysteresis = <1000>;
 					type = "critical";
 				};
@@ -1671,7 +1697,7 @@
 					type = "hot";
 				};
 				dcritical: trip-point@3 {
-					temperature = <150000>;
+					temperature = <110000>;
 					hysteresis = <1000>;
 					type = "critical";
 				};
@@ -1756,6 +1782,12 @@
 		interrupts = <0 52 1>;
 		interrupt-names = "ddr_bandwidth";
 	};
+	dmc_monitor {
+		compatible = "amlogic, dmc_monitor";
+		status = "okay";
+		reg_base = <0xff639000>;
+		interrupts = <0 51 1>;
+	};
 
 	defendkey: defendkey {
 	compatible = "amlogic, defendkey";
@@ -1780,6 +1812,21 @@
 			dev_name = "aml_sha_dma";
 			status = "okay";
 		};
+	};
+
+	efuse: efuse{
+		compatible = "amlogic, efuse";
+		read_cmd = <0x82000030>;
+		write_cmd = <0x82000031>;
+		get_max_cmd = <0x82000033>;
+		key = <&efusekey>;
+		clocks = <&clkc CLKID_EFUSE>;
+		clock-names = "efuse_clk";
+		status = "disabled";
+	};
+
+	cpu_ver_name {
+		compatible = "amlogic, cpu-major-id-g12a";
 	};
 };/* end of / */
 
@@ -2024,10 +2071,14 @@
 				   "GPIOC_1",
 				   "GPIOC_2",
 				   "GPIOC_3",
-				   "GPIOC_4",
 				   "GPIOC_5";
 			function = "gpio_periphs";
 			output-high;
+		};
+		mux1 {
+			groups = "GPIOC_4";
+			function = "gpio_periphs";
+			output-low;
 		};
 	};
 
@@ -2131,7 +2182,12 @@
 			groups = "GPIOV_0";
 			function = "gpio_periphs";
 			bias-pull-up;
-			output-high;
+			output-low;
+		};
+		mux1 {
+			groups = "GPIOX_4";
+			function = "gpio_periphs";
+			output-low;
 		};
 	};
 
@@ -2337,6 +2393,7 @@
 				 //"spi0_ss0_x",
 				 "spi0_clk_x";
 			function = "spi0";
+			drive-strength = <1>;
 		};
 	};
 
@@ -2347,6 +2404,7 @@
 					"spi0_ss0_c",
 					"spi0_clk_c";
 			function = "spi0";
+			drive-strength = <1>;
 		};
 	};
 
@@ -2357,6 +2415,7 @@
 				 //"spi1_ss0",
 				 "spi1_clk";
 			function = "spi1";
+			drive-strength = <1>;
 		};
 	};
 

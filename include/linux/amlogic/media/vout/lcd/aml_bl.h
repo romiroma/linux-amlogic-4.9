@@ -45,6 +45,7 @@ enum bl_chip_type_e {
 	BL_CHIP_GXTVBB,
 	BL_CHIP_GXL,
 	BL_CHIP_GXM,
+	BL_CHIP_TXL,
 	BL_CHIP_TXLX,
 	BL_CHIP_AXG,
 	BL_CHIP_G12A,
@@ -181,8 +182,8 @@ struct aml_bl_drv_s {
 	struct backlight_device   *bldev;
 	struct workqueue_struct   *workqueue;
 	struct delayed_work       bl_delayed_work;
-	struct resource *res_ldim_irq;
-	struct resource *res_rdma_irq;
+	struct resource *res_ldim_vsync_irq;
+	struct resource *res_ldim_rdma_irq;
 };
 
 extern struct aml_bl_drv_s *aml_bl_get_driver(void);

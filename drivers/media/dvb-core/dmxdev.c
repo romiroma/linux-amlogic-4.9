@@ -1071,7 +1071,7 @@ static int dvb_demux_do_ioctl(struct file *file,
 		break;
 
 	default:
-		ret = -EINVAL;
+		ret = -ENOTTY;
 		break;
 	}
 	mutex_unlock(&dmxdev->mutex);
@@ -1133,8 +1133,9 @@ static long dvb_demux_compat_ioctl(struct file *filp,
 			unsigned int cmd, unsigned long args)
 {
 	unsigned long ret;
-
+#ifdef CONFIG_COMPAT
 	args = (unsigned long)compat_ptr(args);
+#endif
 	ret = dvb_demux_ioctl(filp, cmd, args);
 	return ret;
 }
@@ -1223,8 +1224,9 @@ static long dvb_dvr_compat_ioctl(struct file *filp,
 			unsigned int cmd, unsigned long args)
 {
 	unsigned long ret;
-
+#ifdef CONFIG_COMPAT
 	args = (unsigned long)compat_ptr(args);
+#endif
 	ret = dvb_dvr_ioctl(filp, cmd, args);
 	return ret;
 }

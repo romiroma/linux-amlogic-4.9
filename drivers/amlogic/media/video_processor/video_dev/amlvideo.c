@@ -294,6 +294,23 @@ static const struct vframe_receiver_op_s video_vf_receiver = {
  * Videobuf operations
  * ------------------------------------------------------------------
  */
+
+static int vidioc_g_parm(struct file *file, void *priv,
+				struct v4l2_streamparm *parms)
+{
+	struct vivi_dev *dev = video_drvdata(file);
+	struct v4l2_amlogic_parm *ap
+		= (struct v4l2_amlogic_parm *)&parms->parm.capture;
+
+	if (parms->type != V4L2_BUF_TYPE_VIDEO_CAPTURE)
+		return -EINVAL;
+
+	memset(ap, 0, sizeof(struct v4l2_amlogic_parm));
+	*ap = dev->am_parm;
+
+	return 0;
+}
+
 static int buffer_setup(struct videobuf_queue *vq, unsigned int *count,
 			unsigned int *size)
 {
@@ -509,6 +526,7 @@ static int vidioc_dqbuf(struct file *file, void *priv, struct v4l2_buffer *p)
 	struct vivi_dev *dev = video_drvdata(file);
 	int ret = 0;
 	u64 pts_us64 = 0;
+	u64 pts_tmp;
 	struct vframe_s *next_vf;
 
 	if (vfq_level(&dev->q_ready) > AMLVIDEO_POOL_SIZE - 1)
@@ -524,6 +542,9 @@ static int vidioc_dqbuf(struct file *file, void *priv, struct v4l2_buffer *p)
 		return -EAGAIN;
 	}
 	dev->vf->omx_index = dev->frame_num;
+	dev->am_parm.signal_type = dev->vf->signal_type;
+	dev->am_parm.master_display_colour
+		= dev->vf->prop.master_display_colour;
 
 	if (dev->vf->pts_us64) {
 		dev->first_frame = 1;
@@ -532,9 +553,13 @@ static int vidioc_dqbuf(struct file *file, void *priv, struct v4l2_buffer *p)
 		dev->first_frame = 1;
 		pts_us64 = 0;
 	} else {
+		pts_tmp = DUR2PTS(dev->vf->duration) * 100;
+		do_div(pts_tmp, 9);
 		pts_us64 = dev->last_pts_us64
-			+ (DUR2PTS(dev->vf->duration))*100/9;
-		dev->vf->pts = pts_us64*9/100;
+			+ pts_tmp;
+		pts_tmp = pts_us64*9;
+		do_div(pts_tmp, 100);
+		dev->vf->pts = pts_tmp;
 		/*AMLVIDEO_WARN("pts= %d, dev->vf->duration= %d\n",*/
 			/*dev->vf->pts, (DUR2PTS(dev->vf->duration)));*/
 	}
@@ -769,6 +794,8 @@ static const struct v4l2_ioctl_ops amlvideo_ioctl_ops = {
 #ifdef CONFIG_VIDEO_V4L1_COMPAT
 	.vidiocgmbuf = vidiocgmbuf,
 #endif
+	.vidioc_g_parm = vidioc_g_parm,
+
 };
 
 static struct video_device amlvideo_template = {

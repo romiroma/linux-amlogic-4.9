@@ -495,9 +495,10 @@
 		key_num = <1>;
 		key_name = "power";
 		key_code = <116>;
-		key_pin = <&gpio_ao  GPIOAO_2  GPIO_ACTIVE_HIGH>;/*"GPIOAO_2";*/
 		irq_keyup = <6>;
 		irq_keydown = <7>;
+		key-gpios = <&gpio_ao  GPIOAO_2  GPIO_ACTIVE_HIGH>;
+		detect_mode = <0>;/*0:polling mode, 1:irq mode*/
 	};
 
 
@@ -735,6 +736,7 @@
 		pinctrl-0=<&hdmitx_aocec>;
 		reg = <0x0 0xc810023c 0x0 0x4
 		       0x0 0xc8100000 0x0 0x200>;
+		reg-names = "ao_exit","ao";
 	};
 
 	sysled {
@@ -1129,7 +1131,7 @@
 		compatible = "amlogic, unifykey";
 		status = "ok";
 
-		unifykey-num = <15>;
+		unifykey-num = <16>;
 		unifykey-index-0 = <&keysn_0>;
 		unifykey-index-1 = <&keysn_1>;
 		unifykey-index-2 = <&keysn_2>;
@@ -1145,6 +1147,7 @@
 		unifykey-index-12= <&keysn_12>;
 		unifykey-index-13= <&keysn_13>;
 		unifykey-index-14= <&keysn_14>;
+		unifykey-index-15= <&keysn_15>;
 
 		keysn_0: key_0{
 			key-name = "usid";
@@ -1224,6 +1227,11 @@
 			key-device = "secure";
 			key-permit = "read","write","del";
 		};
+		keysn_15:key_15{
+			key-name = "region_code";
+			key-device = "normal";
+			key-permit = "read","write","del";
+		};
 	};//End unifykey
 	dvb {
 		compatible = "amlogic, dvb";
@@ -1262,6 +1270,39 @@
 		&clkc CLKID_AHB_ARB0
 		&clkc CLKID_HIU_IFACE>;
 		clock-names = "demux", "asyncfifo", "ahbarb0", "uparsertop";
+	};
+
+	/* SMC */
+	smartcard{
+		compatible = "amlogic,smartcard";
+		irq_trigger_type = "GPIO_IRQ_LOW";
+
+		reset_pin-gpios = <&gpio GPIODV_21 GPIO_ACTIVE_HIGH>;
+		detect_pin-gpios = <&gpio GPIODV_20 GPIO_ACTIVE_HIGH>;
+		enable_5v3v_pin-gpios = <&gpio GPIODV_19 GPIO_ACTIVE_HIGH>;
+		enable_pin-gpios = <&gpio GPIODV_20 GPIO_ACTIVE_HIGH>;
+
+		interrupts = <0 37 1>;
+		interrupt-names = "smc0_irq";
+		/*
+		 *Smc clock source, if change this,
+		 *you must adjust clk and divider in smartcard.c
+		 */
+		smc0_clock_source = <0>;
+		smc0_irq = <37>;		//smc irq
+		/*0: high voltage on detect pin indicates card in.*/
+		smc0_det_invert = <0>;
+		smc0_5v3v_level = <0>;
+		/*Ordinarily,smartcard controller needs a enable pin.*/
+		smc_need_enable_pin = "no";
+		reset_level = <0>;
+		smc0_enable_level = <0>;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&sd_iso7816_pins>;
+		clocks = <&clkc CLKID_SMART_CARD>;
+		clock-names = "smartcard";
+		status = "okay";
 	};
 };
 &efuse {

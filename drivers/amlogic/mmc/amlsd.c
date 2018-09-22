@@ -867,6 +867,8 @@ int aml_sd_uart_detect(struct amlsd_platform *pdata)
 			pr_info("normal card in\n");
 			aml_uart_switch(pdata, 0);
 			aml_jtag_switch_ao(pdata);
+			if (host->data->chip_type == MMC_CHIP_G12A)
+				host->is_sduart = 0;
 			if (pdata->caps & MMC_CAP_4_BIT_DATA)
 				mmc->caps |= MMC_CAP_4_BIT_DATA;
 		}
@@ -882,6 +884,8 @@ int aml_sd_uart_detect(struct amlsd_platform *pdata)
 			pr_info("card out\n");
 
 		pdata->is_tuned = false;
+		if (host->data->chip_type == MMC_CHIP_G12A)
+			host->is_sduart = 0;
 		if (mmc && mmc->card)
 			mmc_card_set_removed(mmc->card);
 		aml_uart_switch(pdata, 0);
@@ -890,7 +894,7 @@ int aml_sd_uart_detect(struct amlsd_platform *pdata)
 		aml_sd_voltage_switch(mmc,
 				MMC_SIGNAL_VOLTAGE_330);
 
-		if (pdata->caps & MMC_CAP_4_BIT_DATA)
+		if (pdata->caps & MMC_CAP_4_BIT_DATA && mmc)
 			mmc->caps |= MMC_CAP_4_BIT_DATA;
 	}
 	return 0;
@@ -944,11 +948,10 @@ static int meson_cd_op(void *data)
 	struct amlsd_host *host = pdata->host;
 	int ret = 0;
 
-#ifdef AML_MMC_TDMA
 	if ((host->mem->start == host->data->port_b_base)
-			&& (host->data->chip_type == MMC_CHIP_G12A))
+			&& host->data->tdma_f)
 		wait_for_completion(&host->drv_completion);
-#endif
+
 	mutex_lock(&pdata->in_out_lock);
 	if (card_dealed == 1) {
 		card_dealed = 0;
@@ -971,11 +974,11 @@ static int meson_cd_op(void *data)
 		mmc_detect_change(mmc, msecs_to_jiffies(0));
 
 	card_dealed = 0;
-#ifdef AML_MMC_TDMA
+
 	if ((host->mem->start == host->data->port_b_base)
-			&& (host->data->chip_type == MMC_CHIP_G12A))
+			&& host->data->tdma_f)
 		complete(&host->drv_completion);
-#endif
+
 	return 0;
 }
 

@@ -272,6 +272,11 @@ struct vdin_dev_s {
 	 *0: config 10bit as 12bit
 	 */
 	unsigned int color_depth_mode;
+	/* output_color_depth:
+	 * when tv_input is 4k50hz_10bit or 4k60hz_10bit,
+	 * choose output color depth from dts
+	 */
+	unsigned int output_color_depth;
 	/* cutwindow config */
 	bool cutwindow_cfg;
 	bool auto_cutwindow_en;
@@ -303,6 +308,8 @@ struct vdin_dev_s {
 	unsigned int vdin_reset_flag;
 	unsigned int vdin_dev_ssize;
 	wait_queue_head_t queue;
+
+	struct dentry *dbg_root;	/*dbg_fs*/
 };
 
 extern struct vframe_provider_s *vf_get_provider_by_name(
@@ -333,10 +340,16 @@ extern void ldim_get_matrix(int *data, int reg_sel);
 extern void ldim_set_matrix(int *data, int reg_sel);
 extern void tvafe_snow_config(unsigned int onoff);
 extern void tvafe_snow_config_clamp(unsigned int onoff);
+extern void tvafe_snow_config_acd(void);
+extern void tvafe_snow_config_acd_resume(void);
 extern void vdin_vf_reg(struct vdin_dev_s *devp);
 extern void vdin_vf_unreg(struct vdin_dev_s *devp);
 extern void vdin_pause_dec(struct vdin_dev_s *devp);
 extern void vdin_resume_dec(struct vdin_dev_s *devp);
 extern bool is_dolby_vision_enable(void);
+
+extern void vdin_debugfs_init(struct vdin_dev_s *vdevp);
+extern void vdin_debugfs_exit(struct vdin_dev_s *vdevp);
+
 #endif /* __TVIN_VDIN_DRV_H */
 

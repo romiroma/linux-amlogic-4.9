@@ -459,7 +459,8 @@ void di_hw_init(bool pd_enable, bool mc_enable)
 	else
 		DI_Wr(DI_CLKG_CTRL, 0x1); /* di no clock gate */
 
-	if (is_meson_txlx_cpu() ||
+	if (is_meson_txl_cpu() ||
+		is_meson_txlx_cpu() ||
 		is_meson_gxlx_cpu() ||
 		is_meson_txhd_cpu() ||
 		is_meson_g12a_cpu() ||
@@ -516,14 +517,13 @@ void di_hw_init(bool pd_enable, bool mc_enable)
 		di_pre_gate_control(false, true);
 		di_post_gate_control(false);
 		di_top_gate_control(false, false);
-	} else if (is_meson_gxlx_cpu()) {
+	} else if (is_meson_txl_cpu() || is_meson_gxlx_cpu()) {
 		/* di clock div enable for pq load */
 		DI_Wr(DI_CLKG_CTRL, 0x80000000);
 	} else {
 		DI_Wr(DI_CLKG_CTRL, 0x2); /* di clock gate all */
 	}
-	switch_vpu_clk_gate_vmod(VPU_VPU_CLKB,
-		VPU_CLK_GATE_OFF);
+	switch_vpu_clk_gate_vmod(VPU_VPU_CLKB, VPU_CLK_GATE_OFF);
 
 }
 
@@ -785,7 +785,7 @@ void enable_afbc_input(struct vframe_s *vf)
 
 	if (vf->type & VIDTYPE_COMPRESS) {
 		r = (3 << 24) |
-		    (17 << 16) |
+		    (10 << 16) |
 		    (1 << 14) | /*burst1 1*/
 		    vf->bitdepth;
 
@@ -796,7 +796,6 @@ void enable_afbc_input(struct vframe_s *vf)
 			r |= 0x88;
 
 		RDMA_WR(AFBC_MODE, r);
-		RDMA_WR(AFBC_ENABLE, 0x1700);
 		RDMA_WR(AFBC_CONV_CTRL, 0x100);
 		u = (vf->bitdepth >> (BITDEPTH_U_SHIFT)) & 0x3;
 		v = (vf->bitdepth >> (BITDEPTH_V_SHIFT)) & 0x3;
@@ -834,19 +833,25 @@ void enable_afbc_input(struct vframe_s *vf)
 		RDMA_WR_BITS(DI_INP_GEN_REG, 0, 0, 1);
 		/* afbc to di enable */
 		if (!cpu_after_eq(MESON_CPU_MAJOR_ID_G12A)) {
-			if (Rd_reg_bits(VIU_MISC_CTRL0, 19, 1) != 1)
-				RDMA_WR_BITS(VIU_MISC_CTRL0, 1, 19, 1);
 			/* DI inp(current data) switch to AFBC */
-			RDMA_WR_BITS(VIUB_MISC_CTRL0, 1, 16, 1);
+			if (RDMA_RD_BITS(VIU_MISC_CTRL0, 29, 1) != 1)
+				RDMA_WR_BITS(VIU_MISC_CTRL0, 1, 29, 1);
+			if (RDMA_RD_BITS(VIUB_MISC_CTRL0, 16, 1) != 1)
+				RDMA_WR_BITS(VIUB_MISC_CTRL0, 1, 16, 1);
+			if (RDMA_RD_BITS(VIU_MISC_CTRL1, 0, 1) != 1)
+				RDMA_WR_BITS(VIU_MISC_CTRL1, 1, 0, 1);
+			if (RDMA_RD(VD2_AFBC_ENABLE) != 0x1600)
+				RDMA_WR(VD2_AFBC_ENABLE, 0x1600);
 		}
 	} else {
 		RDMA_WR(AFBC_ENABLE, 0);
 		/* afbc to vpp(replace vd1) enable */
 		if (!cpu_after_eq(MESON_CPU_MAJOR_ID_G12A)) {
-			if (Rd_reg_bits(VIU_MISC_CTRL0, 19, 1) != 0)
-				RDMA_WR_BITS(VIU_MISC_CTRL0, 0, 19, 1);
-			/* DI inp(current data) switch to memory */
-			RDMA_WR_BITS(VIUB_MISC_CTRL0, 0, 16, 1);
+			if (RDMA_RD_BITS(VIU_MISC_CTRL1, 0, 1) != 0 ||
+				RDMA_RD_BITS(VIUB_MISC_CTRL0, 16, 1) != 0) {
+				RDMA_WR_BITS(VIU_MISC_CTRL1, 0, 0, 1);
+				RDMA_WR_BITS(VIUB_MISC_CTRL0, 0, 16, 1);
+			}
 		}
 	}
 }
@@ -2622,7 +2627,7 @@ static void reset_pre_simple_rd_mif_g12(unsigned char madi_en,
  * frame reset for pre which have nothing with encoder
  * go field
  */
-void pre_frame_reset_g12a(unsigned char madi_en,
+void pre_frame_reset_g12(unsigned char madi_en,
 	unsigned char mcdi_en)
 {
 	unsigned int reg_val = 0;
@@ -2630,6 +2635,7 @@ void pre_frame_reset_g12a(unsigned char madi_en,
 	if (cpu_after_eq(MESON_CPU_MAJOR_ID_G12B))
 		reset_pre_simple_rd_mif_g12(madi_en, mcdi_en);
 	else {
+		reg_val = RDMA_RD(DI_PRE_CTRL);
 		if (madi_en)
 			reg_val |= (1<<25);
 		if (mcdi_en)
@@ -2984,7 +2990,13 @@ static void di_pre_data_mif_ctrl(bool enable)
 		/* enable input mif*/
 		DI_Wr(DI_CHAN2_GEN_REG, Rd(DI_CHAN2_GEN_REG) | 0x1);
 		DI_Wr(DI_MEM_GEN_REG, Rd(DI_MEM_GEN_REG) | 0x1);
-		DI_Wr(DI_INP_GEN_REG, Rd(DI_INP_GEN_REG) | 0x1);
+		if (Rd_reg_bits(VIU_MISC_CTRL1, 0, 1) == 1) {
+			DI_Wr(DI_INP_GEN_REG, Rd(DI_INP_GEN_REG) & ~0x1);
+			RDMA_WR_BITS(VD2_AFBC_ENABLE, 1, 8, 1);
+		} else {
+			DI_Wr(DI_INP_GEN_REG, Rd(DI_INP_GEN_REG) | 0x1);
+			RDMA_WR_BITS(VD2_AFBC_ENABLE, 0, 8, 1);
+		}
 		/* nrwr no clk gate en=0 */
 		RDMA_WR_BITS(DI_NRWR_CTRL, 0, 24, 1);
 	} else {
@@ -2996,6 +3008,9 @@ static void di_pre_data_mif_ctrl(bool enable)
 		DI_Wr(DI_CHAN2_GEN_REG, Rd(DI_CHAN2_GEN_REG) & ~0x1);
 		DI_Wr(DI_MEM_GEN_REG, Rd(DI_MEM_GEN_REG) & ~0x1);
 		DI_Wr(DI_INP_GEN_REG, Rd(DI_INP_GEN_REG) & ~0x1);
+		/* disable AFBC input */
+		if (Rd_reg_bits(VIU_MISC_CTRL1, 0, 1) == 1)
+			RDMA_WR_BITS(VD2_AFBC_ENABLE, 0, 8, 1);
 	}
 }
 
@@ -3154,6 +3169,57 @@ void di_load_regs(struct di_pq_parm_s *di_pq_ptr)
 			pr_info("[%u][0x%x] = [0x%x] %s\n", i, addr,
 				value, Rd(addr) != value?"fail":"success");
 	}
+}
+/*note:*/
+/*	function: patch for txl for progressive source	*/
+/*		480p/576p/720p from hdmi will timeout	*/
+/*	prog_flg: in:	1:progressive;			*/
+/*	cnt:	in:	di_pre_stru.field_count_for_cont*/
+/*	mc_en:	in:	mcpre_en*/
+void di_txl_patch_prog(int prog_flg, unsigned int cnt, bool mc_en)
+{
+	unsigned int di_mtn_1_ctrl1 = 0; /*ary add tmp*/
+
+	if (!prog_flg || !is_meson_txl_cpu())
+		return;
+
+	/*printk("prog patch\n");*/
+	if (cnt >= 3) {
+		di_mtn_1_ctrl1 |= 1 << 29;/* enable txt */
+
+		if (mc_en) {
+			RDMA_WR(DI_MTN_CTRL1,
+					(0xffffcfff & RDMA_RD(DI_MTN_CTRL1)));
+
+			/* enable me(mc di) */
+			if (cnt == 4) {
+				di_mtn_1_ctrl1 &= (~(1 << 30));
+				/* enable contp2rd and contprd */
+				RDMA_WR(MCDI_MOTINEN, 1 << 1 | 1);
+
+			}
+			if (cnt == 5)
+				RDMA_WR(MCDI_CTRL_MODE, 0x1bfff7ff);
+
+
+		}
+
+	} else {
+		if (mc_en) {
+			/* txtdet_en mode */
+			RDMA_WR_BITS(MCDI_CTRL_MODE, 0, 1, 1);
+			RDMA_WR_BITS(MCDI_CTRL_MODE, 1, 9, 1);
+			RDMA_WR_BITS(MCDI_CTRL_MODE, 1, 16, 1);
+			RDMA_WR_BITS(MCDI_CTRL_MODE, 0, 28, 1);
+			RDMA_WR(MCDI_MOTINEN, 0);
+			RDMA_WR(DI_MTN_CTRL1,
+				(0xffffcfff & RDMA_RD(DI_MTN_CTRL1)));
+			/* disable me(mc di) */
+		}
+		RDMA_WR(DNR_CTRL, 0);
+	}
+	RDMA_WR(DI_MTN_1_CTRL1, di_mtn_1_ctrl1);
+
 }
 #ifdef DEBUG_SUPPORT
 module_param_named(pre_mif_gate, pre_mif_gate, bool, 0644);

@@ -65,6 +65,7 @@ struct pts_table_s {
 	u32 lookup_cache_offset;
 	bool lookup_cache_valid;
 	u32 lookup_cache_pts;
+	u64 lookup_cache_pts_uS64;
 	unsigned long buf_start;
 	u32 buf_size;
 	int first_checkin_pts;
@@ -509,9 +510,9 @@ static int pts_checkin_offset_inline(u8 type, u32 offset, u32 val, u64 uS64)
 				pr_info("init apts[%d] at 0x%x\n", type, val);
 
 			if (type == PTS_TYPE_VIDEO)
-				WRITE_PARSER_REG(VIDEO_PTS, val);
+				timestamp_vpts_set(val);
 			else if (type == PTS_TYPE_AUDIO)
-				WRITE_PARSER_REG(AUDIO_PTS, val);
+				timestamp_apts_set(val);
 
 			pTable->status = PTS_RUNNING;
 		}
@@ -686,6 +687,7 @@ static int pts_lookup_offset_inline_locked(u8 type, u32 offset, u32 *val,
 		if ((pTable->lookup_cache_valid) &&
 			(offset == pTable->lookup_cache_offset)) {
 			*val = pTable->lookup_cache_pts;
+			*uS64 = pTable->lookup_cache_pts_uS64;
 			return 0;
 		}
 
@@ -803,6 +805,7 @@ static int pts_lookup_offset_inline_locked(u8 type, u32 offset, u32 *val,
 #endif
 
 			pTable->lookup_cache_pts = *val;
+			pTable->lookup_cache_pts_uS64 = *uS64;
 			pTable->lookup_cache_offset = offset;
 			pTable->lookup_cache_valid = true;
 
@@ -899,8 +902,8 @@ static int pts_lookup_offset_inline_locked(u8 type, u32 offset, u32 *val,
 								p->val);
 					}
 				}
+				return 0;
 			}
-			return 0;
 		}
 #endif
 		else {
@@ -910,6 +913,7 @@ static int pts_lookup_offset_inline_locked(u8 type, u32 offset, u32 *val,
 			 */
 			if (!pTable->first_lookup_ok) {
 				*val = pTable->first_checkin_pts;
+				*uS64 = (u64)(*val) << 32;
 				pTable->first_lookup_ok = 1;
 				pTable->first_lookup_is_fail = 1;
 
@@ -1387,7 +1391,7 @@ int pts_start(u8 type)
 			pTable->buf_size = READ_VREG(HEVC_STREAM_END_ADDR)
 							- pTable->buf_start;
 #endif
-			WRITE_PARSER_REG(VIDEO_PTS, 0);
+			timestamp_vpts_set(0);
 			timestamp_pcrscr_set(0);
 			/* video always need the pcrscr,*/
 			/*Clear it to use later */
@@ -1420,8 +1424,7 @@ int pts_start(u8 type)
 				 * streaming buffer though.
 				 */
 				/* BUG_ON(pTable->buf_size <= 0x10000); */
-
-				WRITE_PARSER_REG(VIDEO_PTS, 0);
+				timestamp_vpts_set(0);
 				timestamp_pcrscr_set(0);
 				/* video always need the pcrscr, */
 				/*Clear it to use later*/
@@ -1438,8 +1441,7 @@ int pts_start(u8 type)
 					- pTable->buf_start + 8;
 
 				/* BUG_ON(pTable->buf_size <= 0x10000); */
-
-				WRITE_PARSER_REG(AUDIO_PTS, 0);
+				timestamp_apts_set(0);
 				timestamp_firstapts_set(0);
 				pTable->first_checkin_pts = -1;
 				pTable->first_lookup_ok = 0;

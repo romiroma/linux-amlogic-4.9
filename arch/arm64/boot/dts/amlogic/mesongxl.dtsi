@@ -135,10 +135,19 @@
 	};
 	arm_pmu {
 		compatible = "arm,armv8-pmuv3";
-		interrupts = <0 137 4>,
-			     <0 138 4>,
-			     <0 153 4>,
-			     <0 154 4>;
+		interrupts = <0 137 4>;
+		reg = <0x0 0xc8834400 0 0x1000>;
+
+		/* addr = base + offset << 2 */
+		sys_cpu_status0_offset = <0xa0>;
+
+		sys_cpu_status0_pmuirq_mask = <0xf>;
+
+		/* default 10ms */
+		relax_timer_ns = <10000000>;
+
+		/* default 10000us */
+		max_wait_cnt = <10000>;
 	};
 
 	gic: interrupt-controller@2c001000 {
@@ -169,6 +178,12 @@
 		in_base_func = <0x82000020>;
 		out_base_func = <0x82000021>;
 		reserve_mem_size = <0x00300000>;
+	};
+
+	vcodec_dec {
+		compatible = "amlogic, vcodec-dec";
+		dev_name = "aml-vcodec-dec";
+		status = "okay";
 	};
 
 	securitykey {
@@ -544,6 +559,10 @@
 			ranges = <0x0 0x0 0x0 0xd0000000 0x0 0x200000>;
 		};
 	}; /* end of soc */
+
+	cpu_ver_name {
+		compatible = "amlogic, cpu-major-id-gxl";
+	};
 }; /* end of root */
 
 &pinctrl_aobus {
@@ -810,6 +829,16 @@
 		};
 	};
 
+	sd_iso7816_pins:sd_iso7816_pins {
+		mux {
+			groups = "iso7816_clk_dv",
+				"iso7816_data_dv";
+			function = "iso7816";
+			input-enable;
+			bias-pull-down;
+		};
+	};
+
 	nand_pulldown: nand_pulldown {
 		mux {
 			groups = "emmc_nand_d07",
@@ -1013,6 +1042,84 @@
 			};
 		};
 
+	lcd_ttl_rgb_6bit_on_pins:lcd_ttl_rgb_6bit_on{
+		mux {
+			groups = "lcd_r2_7",
+				"lcd_g2_7",
+				"lcd_b2_7";
+			function = "lcd_ttl";
+		};
+	};
+	lcd_ttl_rgb_6bit_off_pins:lcd_ttl_rgb_6bit_off{
+		mux {
+			groups = "GPIODV_2","GPIODV_3","GPIODV_4",
+				"GPIODV_5","GPIODV_6","GPIODV_7",
+				"GPIODV_10","GPIODV_11","GPIODV_12",
+				"GPIODV_13","GPIODV_14","GPIODV_15",
+				"GPIODV_18","GPIODV_19","GPIODV_20",
+				"GPIODV_21","GPIODV_22","GPIODV_23";
+			function = "gpio_periphs";
+			input-enable;
+		};
+	};
+
+	lcd_ttl_rgb_8bit_on_pins:lcd_ttl_rgb_8bit_on{
+		mux {
+			groups = "lcd_r0_1", "lcd_r2_7",
+				"lcd_g0_1", "lcd_g2_7",
+				"lcd_b0_1", "lcd_b2_7";
+			function = "lcd_ttl";
+		};
+	};
+	lcd_ttl_rgb_8bit_off_pins:lcd_ttl_rgb_8bit_off{
+		mux {
+			groups = "GPIODV_0","GPIODV_1","GPIODV_2","GPIODV_3",
+				"GPIODV_4","GPIODV_5","GPIODV_6","GPIODV_7",
+				"GPIODV_8","GPIODV_9","GPIODV_10","GPIODV_11",
+				"GPIODV_12","GPIODV_13","GPIODV_14","GPIODV_15",
+				"GPIODV_16","GPIODV_17","GPIODV_18","GPIODV_19",
+				"GPIODV_20","GPIODV_21","GPIODV_22","GPIODV_23";
+			function = "gpio_periphs";
+			input-enable;
+		};
+	};
+		 /* DE + clk */
+	lcd_ttl_de_on_pins:lcd_ttl_de_on_pin{
+		mux {
+			groups = "tcon_cph", /* clk */
+				"tcon_oeh";  /* DE */
+			function = "lcd_ttl";
+		};
+	};
+		 /* hvsync + clk */
+	lcd_ttl_hvsync_on_pins:lcd_ttl_hvsync_on_pin{
+		mux {
+			groups = "tcon_cph", /* clk */
+				"tcon_stv1", /* vs */
+				"tcon_sth1"; /* hs */
+			function = "lcd_ttl";
+		};
+	};
+		 /* DE + hvsync + clk */
+	lcd_ttl_de_hvsync_on_pins:lcd_ttl_de_hvsync_on_pin{
+		mux {
+			groups = "tcon_cph", /* clk */
+				"tcon_oeh",  /* DE */
+				"tcon_stv1", /* vs */
+				"tcon_sth1"; /* hs */
+			function = "lcd_ttl";
+		};
+	};
+	lcd_ttl_de_hvsync_off_pins:lcd_ttl_de_hvsync_off_pin{
+		mux {
+			groups = "GPIODV_26", /* clk */
+				"GPIODV_27",  /* DE */
+				"GPIODV_24", /* vs */
+				"GPIODV_25"; /* hs */
+			function = "gpio_periphs";
+			input-enable;
+		};
+	};
 }; /* end of pinctrl_periphs */
 
 &periphs {
@@ -1317,6 +1424,12 @@
 		       0x0 0xc8837000 0x0 0x100>;
 		interrupts = <0 52 1>;
 		interrupt-names = "ddr_bandwidth";
+	};
+	dmc_monitor {
+		compatible = "amlogic, dmc_monitor";
+		status = "okay";
+		reg_base = <0xda838400>;
+		interrupts = <0 51 1>;
 	};
 };
 

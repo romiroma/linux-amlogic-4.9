@@ -139,6 +139,8 @@ static bool video_start_post;
 /*----omx_info  bit0: keep_last_frame, bit1~31: unused----*/
 static u32 omx_info = 0x1;
 
+static struct vframe_master_display_colour_s vf_hdr;
+static bool has_hdr_info;
 static DEFINE_MUTEX(omx_mutex);
 
 #define DURATION_GCD 750
@@ -576,6 +578,8 @@ static bool pts_enforce_pulldown = true;
 static DEFINE_MUTEX(video_module_mutex);
 static DEFINE_MUTEX(video_inuse_mutex);
 static DEFINE_SPINLOCK(lock);
+static DEFINE_SPINLOCK(omx_hdr_lock);
+
 static u32 frame_par_ready_to_set, frame_par_force_to_set;
 static u32 vpts_remainder;
 static int video_property_changed;
@@ -2398,12 +2402,22 @@ bool has_enhanced_layer(struct vframe_s *vf)
 	return req.dv_enhance_exist;
 }
 u32 property_changed_true;
+
+static u64 func_div(u64 number, u32 divid)
+{
+	u64 tmp = number;
+
+	do_div(tmp, divid);
+	return tmp;
+}
+
 static void vsync_toggle_frame(struct vframe_s *vf)
 {
 	u32 first_picture = 0;
 	unsigned long flags = 0;
 	bool vf_with_el = false;
 	bool force_toggle = false;
+	long long *clk_array;
 
 	if (vf == NULL)
 		return;
@@ -2455,8 +2469,9 @@ static void vsync_toggle_frame(struct vframe_s *vf)
 			first_picture = 1;
 		}
 	} else {
-		if (DI_POST_REG_RD(DI_IF1_GEN_REG) & 0x1) {
-			/* disable post di */
+#ifdef CONFIG_AMLOGIC_MEDIA_DEINTERLACE
+		if ((DI_POST_REG_RD(DI_IF1_GEN_REG) & 0x1) != 0) {
+			/* check mif enable status, disable post di */
 			VSYNC_WR_MPEG_REG(DI_POST_CTRL, 0x3 << 30);
 			VSYNC_WR_MPEG_REG(DI_POST_SIZE,
 					  (32 - 1) | ((128 - 1) << 16));
@@ -2464,6 +2479,7 @@ static void vsync_toggle_frame(struct vframe_s *vf)
 					  READ_VCBUS_REG(DI_IF1_GEN_REG) &
 					  0xfffffffe);
 		}
+#endif
 	}
 
 	timer_count = 0;
@@ -2526,18 +2542,26 @@ static void vsync_toggle_frame(struct vframe_s *vf)
 #endif
 			if (debug_flag & DEBUG_FLAG_LATENCY) {
 				vf->ready_clock[3] = sched_clock();
-				pr_info("video toggle latency %lld ms video get latency %lld ms vdin put latency %lld ms. first %lld ms.\n",
-					vf->ready_clock[3]/1000,
-					vf->ready_clock[2]/1000,
-					vf->ready_clock[1]/1000,
-					vf->ready_clock[0]/1000);
+				pr_info("video toggle latency %lld ms,"
+					"video get latency %lld ms,"
+					"vdin put latency %lld ms,"
+					"first %lld ms.\n",
+					func_div(vf->ready_clock[3], 1000),
+					func_div(vf->ready_clock[2], 1000),
+					func_div(vf->ready_clock[1], 1000),
+					func_div(vf->ready_clock[0], 1000));
 				cur_dispbuf->ready_clock[4] = sched_clock();
-				pr_info("video put latency %lld ms video toggle latency %lld ms video get latency %lld ms vdin put latency %lld ms. first %lld ms.\n",
-					cur_dispbuf->ready_clock[4]/1000,
-					cur_dispbuf->ready_clock[3]/1000,
-					cur_dispbuf->ready_clock[2]/1000,
-					cur_dispbuf->ready_clock[1]/1000,
-					cur_dispbuf->ready_clock[0]/1000);
+				clk_array = cur_dispbuf->ready_clock;
+				pr_info("video put latency %lld ms,"
+					"video toggle latency %lld ms,"
+					"video get latency %lld ms,"
+					"vdin put latency %lld ms,"
+					"first %lld ms.\n",
+					func_div(*(clk_array + 4), 1000),
+					func_div(*(clk_array + 3), 1000),
+					func_div(*(clk_array + 2), 1000),
+					func_div(*(clk_array + 1), 1000),
+					func_div(*clk_array, 1000));
 			}
 		}
 
@@ -2570,8 +2594,12 @@ static void vsync_toggle_frame(struct vframe_s *vf)
 		VSYNC_WR_MPEG_REG(AFBC_HEAD_BADDR, vf->compHeadAddr>>4);
 		VSYNC_WR_MPEG_REG(AFBC_BODY_BADDR, vf->compBodyAddr>>4);
 	}
-	if ((vf->canvas0Addr != 0) &&
-	(DI_POST_REG_RD(DI_POST_CTRL) & 0x1000) == 0) {
+	if ((vf->canvas0Addr != 0)
+#ifdef CONFIG_AMLOGIC_MEDIA_DEINTERLACE
+		&& ((DI_POST_REG_RD(DI_POST_CTRL) & 0x1000) == 0)
+		/* check di_post_viu_link   */
+#endif
+		) {
 
 #ifdef CONFIG_AMLOGIC_MEDIA_VSYNC_RDMA
 		if (vf->canvas0Addr != (u32)-1) {
@@ -2797,7 +2825,9 @@ static void vsync_toggle_frame(struct vframe_s *vf)
 		    &frame_parms[1] : &frame_parms[0];
 
 		vpp_set_filters(process_3d_type, wide_setting, vf,
-			next_frame_par, vinfo);
+			next_frame_par, vinfo,
+			(is_dolby_vision_on() &&
+			is_dolby_vision_stb_mode()));
 
 		/* apply new vpp settings */
 		frame_par_ready_to_set = 1;
@@ -2924,7 +2954,11 @@ static inline void vd1_path_select(bool afbc)
 			/* afbc0 gclk ctrl */
 			(0 << 0),
 			0, 22);
+#ifdef CONFIG_AMLOGIC_MEDIA_DEINTERLACE
+		if (!cpu_after_eq(MESON_CPU_MAJOR_ID_G12A))
+			return;
 		if ((DI_POST_REG_RD(DI_POST_CTRL) & 0x100) != 0) {
+			/* check di_vpp_out_en bit */
 			VSYNC_WR_MPEG_REG_BITS(
 				VD1_AFBCD0_MISC_CTRL,
 				/* vd1 mif to di */
@@ -2936,8 +2970,12 @@ static inline void vd1_path_select(bool afbc)
 				1,
 				20, 2);
 		}
+#endif
 	} else {
+#ifdef CONFIG_AMLOGIC_MEDIA_DEINTERLACE
 		if ((DI_POST_REG_RD(DI_POST_CTRL) & 0x100) == 0)
+		/* mif sel */
+#endif
 			VSYNC_WR_MPEG_REG_BITS(
 				VIU_MISC_CTRL0 + misc_off,
 				0, 16, 3);
@@ -3121,6 +3159,7 @@ static void viu_set_dcu(struct vpp_frame_par_s *frame_par, struct vframe_s *vf)
 						cur_dev->viu_off,
 						(bit_mode & 0x3), 8, 2);
 			}
+#ifdef CONFIG_AMLOGIC_MEDIA_DEINTERLACE
 			DI_POST_WR_REG_BITS(DI_IF1_GEN_REG3,
 				(bit_mode&0x3), 8, 2);
 			if (cpu_after_eq(MESON_CPU_MAJOR_ID_TXLX))
@@ -3129,7 +3168,7 @@ static void viu_set_dcu(struct vpp_frame_par_s *frame_par, struct vframe_s *vf)
 			if (cpu_after_eq(MESON_CPU_MAJOR_ID_G12A))
 				DI_POST_WR_REG_BITS(DI_IF0_GEN_REG3,
 					(bit_mode & 0x3), 8, 2);
-
+#endif
 			vd1_path_select(false);
 			VSYNC_WR_MPEG_REG(AFBC_ENABLE, 0);
 		}
@@ -4190,7 +4229,10 @@ static inline bool vpts_expire(struct vframe_s *cur_vf,
 		 * if paused ignore discontinue
 		 */
 		if (!timestamp_pcrscr_enable_state()) {
-			pr_info("video pts discontinue, but pcrscr is disabled, return false\n");
+			/*pr_info("video pts discontinue,
+			 * but pcrscr is disabled,
+			 * return false\n");
+			 */
 			return false;
 		}
 		pts =
@@ -4865,6 +4907,30 @@ void correct_vd2_mif_size_for_DV(
 	}
 }
 
+void set_hdr_to_frame(struct vframe_s *vf)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&omx_hdr_lock, flags);
+
+	if (has_hdr_info) {
+		vf->prop.master_display_colour = vf_hdr;
+
+		//config static signal_type for vp9
+		vf->signal_type = (1 << 29)
+			| (5 << 26) /* unspecified */
+			| (0 << 25) /* limit */
+			| (1 << 24) /* color available */
+			| (9 << 16) /* 2020 */
+			| (16 << 8) /* 2084 */
+			| (9 << 0); /* 2020 */
+
+		//pr_info("set_hdr_to_frame %d, signal_type 0x%x",
+		//vf->prop.master_display_colour.present_flag,vf->signal_type);
+	}
+	spin_unlock_irqrestore(&omx_hdr_lock, flags);
+}
+
 #ifdef FIQ_VSYNC
 void vsync_fisr_in(void)
 #else
@@ -5179,9 +5245,12 @@ static irqreturn_t vsync_isr_in(int irq, void *dev_id)
 		} else if ((cur_dispbuf == &vf_local)
 			   && (video_property_changed)) {
 			if (!(blackout | force_blackout)) {
-				if (cur_dispbuf &&
-					(DI_POST_REG_RD(DI_IF1_GEN_REG) &
-					0x1) == 0) {
+				if (cur_dispbuf
+#ifdef CONFIG_AMLOGIC_MEDIA_DEINTERLACE
+				&& ((DI_POST_REG_RD(DI_IF1_GEN_REG) & 0x1)
+					== 0)
+#endif
+					) {
 					/* setting video display*/
 					/*property in unregister mode */
 					u32 cur_index =
@@ -5234,7 +5303,9 @@ static irqreturn_t vsync_isr_in(int irq, void *dev_id)
 		/* determine the out frame is L or R or blank */
 		judge_3d_fa_out_mode();
 	}
-
+#if defined(CONFIG_AMLOGIC_MEDIA_ENHANCEMENT_VECM)
+	vlock_process(cur_dispbuf);
+#endif
 	while (vf) {
 		if (vpts_expire(cur_dispbuf, vf, toggle_cnt) || show_nosync) {
 			amlog_mask(LOG_MASK_TIMESTAMP,
@@ -5245,8 +5316,12 @@ static irqreturn_t vsync_isr_in(int irq, void *dev_id)
 
 			amlog_mask_if(toggle_cnt > 0, LOG_MASK_FRAMESKIP,
 				      "skipped\n");
-
-
+#ifdef CONFIG_AMLOGIC_MEDIA_ENHANCEMENT_DOLBYVISION
+			if (is_dolby_vision_enable()
+				&& dolby_vision_need_wait())
+				break;
+#endif
+			set_hdr_to_frame(vf);
 
 #if defined(CONFIG_AMLOGIC_MEDIA_ENHANCEMENT_VECM)
 			refresh_on_vs(vf);
@@ -5260,11 +5335,6 @@ static irqreturn_t vsync_isr_in(int irq, void *dev_id)
 				cur_frame_par ?
 				cur_frame_par->supsc1_vert_ratio :
 				0) == 1)
-				break;
-#endif
-#ifdef CONFIG_AMLOGIC_MEDIA_ENHANCEMENT_DOLBYVISION
-			if (is_dolby_vision_enable()
-			&& dolby_vision_need_wait())
 				break;
 #endif
 			/*
@@ -5288,9 +5358,9 @@ static irqreturn_t vsync_isr_in(int irq, void *dev_id)
 			if (debug_flag & DEBUG_FLAG_LATENCY) {
 				vf->ready_clock[2] = sched_clock();
 				pr_info("video get latency %lld ms vdin put latency %lld ms. first %lld ms.\n",
-				vf->ready_clock[2]/1000,
-				vf->ready_clock[1]/1000,
-				vf->ready_clock[0]/1000);
+				func_div(vf->ready_clock[2], 1000),
+				func_div(vf->ready_clock[1], 1000),
+				func_div(vf->ready_clock[0], 1000));
 			}
 			if (video_vf_dirty_put(vf))
 				break;
@@ -5327,14 +5397,15 @@ static irqreturn_t vsync_isr_in(int irq, void *dev_id)
 			if (trickmode_fffb == 1) {
 				trickmode_vpts = vf->pts;
 #ifdef CONFIG_AMLOGIC_MEDIA_VSYNC_RDMA
+	#ifdef CONFIG_AMLOGIC_MEDIA_DEINTERLACE
 				if ((DI_POST_REG_RD(DI_IF1_GEN_REG) & 0x1)
-					== 0)
-					to_notify_trick_wait = true;
-				else {
+					!= 0) {
 					atomic_set(&trickmode_framedone, 1);
 					video_notify_flag |=
 					    VIDEO_NOTIFY_TRICK_WAIT;
-				}
+				} else
+	#endif
+					to_notify_trick_wait = true;
 #else
 				atomic_set(&trickmode_framedone, 1);
 				video_notify_flag |= VIDEO_NOTIFY_TRICK_WAIT;
@@ -5492,6 +5563,8 @@ SET_FILTER:
 #ifdef CONFIG_AMLOGIC_MEDIA_ENHANCEMENT_DOLBYVISION
 	if (is_dolby_vision_enable()) {
 		u32 frame_size = 0, h_size, v_size;
+		u8 pps_state = 0; /* pps no change */
+
 		/* force toggle when keeping frame after playing */
 		if ((cur_dispbuf == &vf_local)
 			&& !toggle_vf
@@ -5516,6 +5589,24 @@ SET_FILTER:
 		}
 #endif
 		if (cur_frame_par) {
+			if (frame_par_ready_to_set || frame_par_force_to_set) {
+				struct vppfilter_mode_s *vpp_filter =
+					&cur_frame_par->vpp_filter;
+				if ((vpp_filter->vpp_hsc_start_phase_step
+					== 0x1000000) &&
+					(vpp_filter->vpp_vsc_start_phase_step
+					== 0x1000000) &&
+					(vpp_filter->vpp_hsc_start_phase_step ==
+					vpp_filter->vpp_hf_start_phase_step) &&
+					!vpp_filter->vpp_pre_vsc_en &&
+					!vpp_filter->vpp_pre_hsc_en &&
+					!cur_frame_par->supsc0_enable &&
+					!cur_frame_par->supsc1_enable &&
+					bypass_pps)
+					pps_state = 2; /* pps disable */
+				else
+					pps_state = 1; /* pps enable */
+			}
 			if (cur_frame_par->VPP_hd_start_lines_
 				>=  cur_frame_par->VPP_hd_end_lines_)
 				h_size = 0;
@@ -5538,7 +5629,7 @@ SET_FILTER:
 				toggle_vf->compHeight : toggle_vf->height;
 			frame_size = (h_size << 16) | v_size;
 		}
-		dolby_vision_process(toggle_vf, frame_size);
+		dolby_vision_process(toggle_vf, frame_size, pps_state);
 		dolby_vision_update_setting();
 	}
 #endif
@@ -5828,7 +5919,7 @@ SET_FILTER:
 			16) | (cur_frame_par->video_input_h & 0x1fff));
 
 		/* vpp super scaler */
-		if (get_cpu_type() >= MESON_CPU_MAJOR_ID_GXTVBB)
+		if (get_cpu_type() >= MESON_CPU_MAJOR_ID_GXTVBB) {
 			vpp_set_super_scaler_regs(cur_frame_par->supscl_path,
 				cur_frame_par->supsc0_enable,
 				cur_frame_par->spsc0_w_in,
@@ -5842,6 +5933,14 @@ SET_FILTER:
 				cur_frame_par->supsc1_vert_ratio,
 				vinfo->width,
 				vinfo->height);
+			if (is_dolby_vision_on() &&
+				is_dolby_vision_stb_mode() &&
+				!cur_frame_par->supsc0_enable &&
+				!cur_frame_par->supsc1_enable) {
+				VSYNC_WR_MPEG_REG(VPP_SRSHARP0_CTRL, 0);
+				VSYNC_WR_MPEG_REG(VPP_SRSHARP1_CTRL, 0);
+			}
+		}
 
 		/* vpp filters */
 		/* SET_MPEG_REG_MASK(VPP_SC_MISC + cur_dev->vpp_off, */
@@ -6005,8 +6104,8 @@ SET_FILTER:
 		if (!legacy_vpp) {
 			VSYNC_WR_MPEG_REG(
 				VPP_PREBLEND_H_SIZE + cur_dev->vpp_off,
-				(cur_frame_par->VPP_pic_in_height_ << 16)
-				| cur_frame_par->VPP_line_in_length_);
+				(cur_frame_par->video_input_h << 16)
+				| cur_frame_par->video_input_w);
 			VSYNC_WR_MPEG_REG(
 				VPP_POSTBLEND_H_SIZE + cur_dev->vpp_off,
 				((cur_frame_par->VPP_post_blend_vd_v_end_ + 1)
@@ -6481,7 +6580,9 @@ int get_current_vscale_skip_count(struct vframe_s *vf)
 	int ret = 0;
 	static struct vpp_frame_par_s frame_par;
 
-	vpp_set_filters(process_3d_type, wide_setting, vf, &frame_par, vinfo);
+	vpp_set_filters(process_3d_type, wide_setting, vf, &frame_par, vinfo,
+		(is_dolby_vision_on() &&
+		is_dolby_vision_stb_mode()));
 	ret = frame_par.vscale_skip_count;
 	if (cur_frame_par && (process_3d_type & MODE_3D_ENABLE))
 		ret |= (cur_frame_par->vpp_3d_mode<<8);
@@ -6675,6 +6776,17 @@ static int  get_display_info(void *data)
 	return 0;
 }
 
+void init_hdr_info(void)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&omx_hdr_lock, flags);
+
+	has_hdr_info = false;
+	memset(&vf_hdr, 0, sizeof(vf_hdr));
+
+	spin_unlock_irqrestore(&omx_hdr_lock, flags);
+}
 static int video_receiver_event_fun(int type, void *data, void *private_data)
 {
 #ifdef CONFIG_AM_VIDEO2
@@ -6688,6 +6800,8 @@ static int video_receiver_event_fun(int type, void *data, void *private_data)
 		drop_frame_count = 0;
 		receive_frame_count = 0;
 		display_frame_count = 0;
+		//init_hdr_info();
+
 	} else if (type == VFRAME_EVENT_PROVIDER_RESET) {
 		video_vf_light_unreg_provider();
 	} else if (type == VFRAME_EVENT_PROVIDER_LIGHT_UNREG)
@@ -6703,6 +6817,8 @@ static int video_receiver_event_fun(int type, void *data, void *private_data)
 		omx_need_drop_frame_num = 0;
 		omx_drop_done = false;
 		omx_pts_set_index = 0;
+		//init_hdr_info();
+
 #ifdef CONFIG_AM_VIDEO2
 		provider_name = (char *)data;
 		if (strncmp(provider_name, "decoder", 7) == 0
@@ -6903,7 +7019,41 @@ static void _set_video_window(int *p)
 		video_property_changed = true;
 	}
 }
+static void config_hdr_info(const struct vframe_master_display_colour_s p)
+{
+	struct vframe_master_display_colour_s tmp = {0};
+	bool valid_hdr = false;
+	unsigned long flags;
 
+	tmp.present_flag = p.present_flag;
+	if (tmp.present_flag == 1) {
+		tmp = p;
+
+		if (tmp.primaries[0][0] == 0 &&
+			tmp.primaries[0][1] == 0 &&
+			tmp.primaries[1][0] == 0 &&
+			tmp.primaries[1][1] == 0 &&
+			tmp.primaries[2][0] == 0 &&
+			tmp.primaries[2][1] == 0 &&
+			tmp.white_point[0] == 0 &&
+			tmp.white_point[1] == 0 &&
+			tmp.luminance[0] == 0 &&
+			tmp.luminance[1] == 0 &&
+			tmp.content_light_level.max_content == 0 &&
+			tmp.content_light_level.max_pic_average == 0) {
+			valid_hdr = false;
+		} else {
+			valid_hdr = true;
+		}
+	}
+
+	spin_lock_irqsave(&omx_hdr_lock, flags);
+	vf_hdr = tmp;
+	has_hdr_info = valid_hdr;
+	spin_unlock_irqrestore(&omx_hdr_lock, flags);
+
+	pr_debug("has_hdr_info %d\n", has_hdr_info);
+}
 static void set_omx_pts(u32 *p)
 {
 	u32 tmp_pts = p[0];
@@ -7019,6 +7169,13 @@ static long amvideo_ioctl(struct file *file, unsigned int cmd, ulong arg)
 	void __user *argp = (void __user *)arg;
 
 	switch (cmd) {
+	case AMSTREAM_IOC_SET_HDR_INFO:{
+			struct vframe_master_display_colour_s tmp;
+
+			if (copy_from_user(&tmp, argp, sizeof(tmp)) == 0)
+				config_hdr_info(tmp);
+		}
+		break;
 	case AMSTREAM_IOC_SET_OMX_VPTS:{
 			u32 pts[6];
 			if (copy_from_user(pts, argp, sizeof(pts)) == 0)
@@ -7369,6 +7526,7 @@ static long amvideo_compat_ioctl(struct file *file, unsigned int cmd, ulong arg)
 	long ret = 0;
 
 	switch (cmd) {
+	case AMSTREAM_IOC_SET_HDR_INFO:
 	case AMSTREAM_IOC_SET_OMX_VPTS:
 	case AMSTREAM_IOC_GET_OMX_VPTS:
 	case AMSTREAM_IOC_GET_OMX_VERSION:

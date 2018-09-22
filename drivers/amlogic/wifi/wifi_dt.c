@@ -125,6 +125,8 @@ static struct wifi_plat_info *wifi_get_driver_data
 	const struct of_device_id *match;
 
 	match = of_match_node(wifi_match, pdev->dev.of_node);
+	if (!match)
+		return NULL;
 	return (struct wifi_plat_info *)match->data;
 }
 #else
@@ -338,7 +340,12 @@ static long wifi_power_ioctl(struct file *filp,
 		WIFI_INFO("ioctl Set sdio wifi power down!\n");
 		break;
 	case SDIO_GET_DEV_TYPE:
-		memcpy(dev_type, get_wifi_inf(), strlen(get_wifi_inf()));
+		if (strlen(get_wifi_inf()) >= sizeof(dev_type))
+			memcpy(dev_type, get_wifi_inf(),
+				(sizeof(dev_type) - 1));
+		else
+			memcpy(dev_type, get_wifi_inf(),
+				strlen(get_wifi_inf()));
 		WIFI_INFO("wifi interface dev type: %s, length = %d\n",
 				dev_type, (int)strlen(dev_type));
 		if (copy_to_user((char __user *)arg,
@@ -491,6 +498,7 @@ int pwm_double_channel_conf_dt(struct wifi_plat_info *plat)
 	ret = of_property_read_u32(wifinode, "pwm_config", &pwm_phandle);
 	if (ret) {
 		pr_err("not match wifi_pwm_config node\n");
+		return -1;
 	} else {
 		pnode = of_find_node_by_phandle(pwm_phandle);
 		if (!pnode) {
@@ -656,11 +664,13 @@ static int wifi_dev_probe(struct platform_device *pdev)
 
 		if (get_cpu_type() >= MESON_CPU_MAJOR_ID_GXTVBB) {
 			ret = pwm_double_channel_conf_dt(plat);
-			if (ret != 0)
+			if (ret != 0) {
 				WIFI_INFO("pwm_double_channel_conf_dt error\n");
-			ret = pwm_double_channel_conf(plat);
-			if (ret != 0)
-				WIFI_INFO("pwm_double_channel_conf error\n");
+			} else {
+				ret = pwm_double_channel_conf(plat);
+				if (ret != 0)
+					WIFI_INFO("pwm_double_channel_conf error\n");
+			}
 		} else if (get_cpu_type() == MESON_CPU_MAJOR_ID_GXBB) {
 			ret = pwm_single_channel_conf(plat);
 			if (ret)

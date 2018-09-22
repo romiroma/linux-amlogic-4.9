@@ -37,7 +37,22 @@ static u32 resample_coef_parameters_table[7][5] = {
 	{0x00800000, 0x0, 0x0, 0x0, 0x0},
 };
 
-int resample_enable(int input_sr)
+void resample_enable(bool enable)
+{
+	audiobus_update_bits(EE_AUDIO_RESAMPLE_CTRL0,
+		0x1 << 31,
+		1 << 31);
+
+	audiobus_update_bits(EE_AUDIO_RESAMPLE_CTRL0,
+		0x1 << 31,
+		0 << 31);
+
+	audiobus_update_bits(EE_AUDIO_RESAMPLE_CTRL0,
+		0x1 << 28,
+		enable << 28);
+}
+
+int resample_init(int input_sr)
 {
 	u16 Avg_cnt_init = 0;
 	unsigned int clk_rate = 167000000;//clk81;
@@ -46,13 +61,11 @@ int resample_enable(int input_sr)
 	pr_info("clk_rate = %u, input_sr = %d, Avg_cnt_init = %u\n",
 		clk_rate, input_sr, Avg_cnt_init);
 
-	audiobus_write(EE_AUDIO_RESAMPLE_CTRL0, (1 << 31));
-	audiobus_write(EE_AUDIO_RESAMPLE_CTRL0, 0);
-	audiobus_write(EE_AUDIO_RESAMPLE_CTRL0,
-				(1 << 28) /* enable */
-				| (0 << 26) /* method0 */
-				| (RESAMPLE_CNT_CONTROL << 16)
-				| Avg_cnt_init);
+	audiobus_update_bits(EE_AUDIO_RESAMPLE_CTRL0,
+		0x3 << 26 | 0x3ff << 16 | 0xffff << 0,
+		0x0 << 26 | /* method0 */
+		RESAMPLE_CNT_CONTROL << 16 |
+		Avg_cnt_init << 0);
 
 	return 0;
 }
@@ -90,4 +103,19 @@ void resample_format_set(int ch_num, int bits)
 {
 	audiobus_write(EE_AUDIO_RESAMPLE_CTRL3,
 		ch_num << 8 | (bits - 1) << 0);
+}
+
+void resample_reset(void)
+{
+	unsigned int asr_ctrl_val;
+
+	asr_ctrl_val = audiobus_read(EE_AUDIO_RESAMPLE_CTRL0);
+	asr_ctrl_val &= ~(1 << 28);
+	audiobus_write(EE_AUDIO_RESAMPLE_CTRL0, asr_ctrl_val);
+	asr_ctrl_val |= (1 << 31);
+	audiobus_write(EE_AUDIO_RESAMPLE_CTRL0, asr_ctrl_val);
+	asr_ctrl_val &= ~(1 << 31);
+	audiobus_write(EE_AUDIO_RESAMPLE_CTRL0, asr_ctrl_val);
+	asr_ctrl_val |= (1 << 28);
+	audiobus_write(EE_AUDIO_RESAMPLE_CTRL0, asr_ctrl_val);
 }

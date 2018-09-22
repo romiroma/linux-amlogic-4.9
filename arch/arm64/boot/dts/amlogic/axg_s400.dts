@@ -42,6 +42,15 @@
 		#size-cells = <2>;
 		ranges;
 		/* global autoconfigured region for contiguous allocations */
+		ramoops@0x07400000 {
+			compatible = "ramoops";
+			reg = <0x0 0x07400000 0x0 0x00100000>;
+			record-size = <0x8000>;
+			console-size = <0x8000>;
+			ftrace-size = <0x0>;
+			pmsg-size = <0x8000>;
+		};
+
 		secmon_reserved:linux,secmon {
 			compatible = "shared-dma-pool";
 			reusable;
@@ -1157,6 +1166,20 @@
 		interrupt-names = "irq_spdifin";
 		pinctrl-names = "spdif_pins";
 		pinctrl-0 = <&spdifout &spdifin>;
+
+		/*
+		 * whether do asrc for pcm.
+		 * if raw data, asrc is disabled automatically
+		 * 0: "Disable",
+		 * 1: "Enable:32K",
+		 * 2: "Enable:44K",
+		 * 3: "Enable:48K",
+		 * 4: "Enable:88K",
+		 * 5: "Enable:96K",
+		 * 6: "Enable:176K",
+		 * 7: "Enable:192K",
+		 */
+		auto_asrc = <3>;
 		status = "okay";
 	};
 	aml_pdm: pdm {
@@ -1374,27 +1397,15 @@
 			function = "pwm_b";
 		};
 	};
+	bl_pwm_off_pins:bl_pwm_off_pin {
+		mux {
+			pins = "GPIOZ_4";
+			function = "gpio_periphs";
+			output-high;
+		};
+	};
 }; /* end of pinctrl_periphs */
 /* Audio Related End */
-
-
-&spicc_a{
-	status = "disabled";
-	num_chipselect = <1>;
-	dma_en = <0>;
-	delay_control = <0x15>;
-	cs_delay = <10>;
-	enhance_dlyctl = <0>;
-};
-
-&spicc_b{
-	status = "disabled";
-	num_chipselect = <1>;
-	dma_en = <0>;
-	delay_control = <0x15>;
-	cs_delay = <10>;
-	enhance_dlyctl = <0>;
-};
 
 &aobus{
 	uart_AO: serial@3000 {

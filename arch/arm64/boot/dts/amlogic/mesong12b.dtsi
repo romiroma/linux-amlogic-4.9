@@ -26,7 +26,7 @@
 #include <dt-bindings/input/input.h>
 #include <dt-bindings/input/meson_rc.h>
 #include <dt-bindings/phy/phy-amlogic-pcie.h>
-#include "mesong12a-dvalin.dtsi"
+#include "mesong12a-bifrost.dtsi"
 #include "g12b-sched-energy.dtsi"
 
 / {
@@ -84,6 +84,16 @@
 			reg = <0x0 0x1>;
 			enable-method = "psci";
 			sched-energy-costs = <&CPU_COST_A53 &CLUSTER_COST_A53>;
+			clocks = <&clkc CLKID_CPU_CLK>,
+			       <&clkc CLKID_CPU_FCLK_P>,
+			       <&clkc CLKID_SYS1_PLL>;
+			clock-names = "core_clk",
+				"low_freq_clk_parent",
+				"high_freq_clk_parent";
+			operating-points-v2 = <&cpu_opp_table0>;
+			cpu-supply = <&vddcpu0>;
+			voltage-tolerance = <0>;
+			clock-latency = <50000>;
 		};
 
 		CPU2:cpu@100 {
@@ -103,7 +113,6 @@
 			cpu-supply = <&vddcpu1>;
 			voltage-tolerance = <0>;
 			clock-latency = <50000>;
-
 		};
 
 		CPU3:cpu@101 {
@@ -113,6 +122,16 @@
 			enable-method = "psci";
 			//cpu-idle-states = <&CPU_SLEEP_0 &CLUSTER_SLEEP_0>;
 			sched-energy-costs = <&CPU_COST_A73 &CLUSTER_COST_A73>;
+			clocks = <&clkc CLKID_CPUB_CLK>,
+			       <&clkc CLKID_CPUB_FCLK_P>,
+			       <&clkc CLKID_SYS_PLL>;
+			clock-names = "core_clk",
+				"low_freq_clk_parent",
+				"high_freq_clk_parent";
+			operating-points-v2 = <&cpu_opp_table1>;
+			cpu-supply = <&vddcpu1>;
+			voltage-tolerance = <0>;
+			clock-latency = <50000>;
 		};
 
 		CPU4:cpu@102 {
@@ -122,6 +141,16 @@
 			enable-method = "psci";
 			//cpu-idle-states = <&CPU_SLEEP_0 &CLUSTER_SLEEP_0>;
 			sched-energy-costs = <&CPU_COST_A73 &CLUSTER_COST_A73>;
+			clocks = <&clkc CLKID_CPUB_CLK>,
+			       <&clkc CLKID_CPUB_FCLK_P>,
+			       <&clkc CLKID_SYS_PLL>;
+			clock-names = "core_clk",
+				"low_freq_clk_parent",
+				"high_freq_clk_parent";
+			operating-points-v2 = <&cpu_opp_table1>;
+			cpu-supply = <&vddcpu1>;
+			voltage-tolerance = <0>;
+			clock-latency = <50000>;
 		};
 
 		CPU5:cpu@103 {
@@ -131,6 +160,16 @@
 			enable-method = "psci";
 			//cpu-idle-states = <&CPU_SLEEP_0 &CLUSTER_SLEEP_0>;
 			sched-energy-costs = <&CPU_COST_A73 &CLUSTER_COST_A73>;
+			clocks = <&clkc CLKID_CPUB_CLK>,
+			       <&clkc CLKID_CPUB_FCLK_P>,
+			       <&clkc CLKID_SYS_PLL>;
+			clock-names = "core_clk",
+				"low_freq_clk_parent",
+				"high_freq_clk_parent";
+			operating-points-v2 = <&cpu_opp_table1>;
+			cpu-supply = <&vddcpu1>;
+			voltage-tolerance = <0>;
+			clock-latency = <50000>;
 		};
 
 		idle-states {
@@ -459,7 +498,7 @@
 		cal_b = <424>;
 		cal_c = <3159>;
 		cal_d = <9411>;
-		rtemp = <130000>;
+		rtemp = <115000>;
 		interrupts = <0 35 0>;
 		clocks = <&clkc CLKID_TS_COMP>; /* CLKID_TS_COMP>;*/
 		clock-names = "ts_comp";
@@ -477,7 +516,7 @@
 		cal_b = <424>;
 		cal_c = <3159>;
 		cal_d = <9411>;
-		rtemp = <130000>;
+		rtemp = <115000>;
 		interrupts = <0 36 0>;
 		clocks = <&clkc CLKID_TS_COMP>; /* CLKID_TS_COMP>;*/
 		clock-names = "ts_comp";
@@ -567,7 +606,7 @@
 				status = "disabled";
 				reg = <0x0 0x1f000 0x0 0x20>;
 				interrupts = <GIC_SPI 21 IRQ_TYPE_EDGE_RISING>,
-					<GIC_SPI 47 IRQ_TYPE_EDGE_RISING>;
+					<GIC_SPI 91 IRQ_TYPE_EDGE_RISING>;
 				#address-cells = <1>;
 				#size-cells = <0>;
 				clocks = <&clkc CLKID_I2C>;
@@ -579,7 +618,7 @@
 				status = "disabled";
 				reg = <0x0 0x1e000 0x0 0x20>;
 				interrupts = <GIC_SPI 214 IRQ_TYPE_EDGE_RISING>,
-					<GIC_SPI 48 IRQ_TYPE_EDGE_RISING>;
+					<GIC_SPI 92 IRQ_TYPE_EDGE_RISING>;
 				#address-cells = <1>;
 				#size-cells = <0>;
 				clocks = <&clkc CLKID_I2C>;
@@ -591,7 +630,7 @@
 				status = "disabled";
 				reg = <0x0 0x1d000 0x0 0x20>;
 				interrupts = <GIC_SPI 215 IRQ_TYPE_EDGE_RISING>,
-					<GIC_SPI 49 IRQ_TYPE_EDGE_RISING>;
+					<GIC_SPI 94 IRQ_TYPE_EDGE_RISING>;
 				#address-cells = <1>;
 				#size-cells = <0>;
 				clocks = <&clkc CLKID_I2C>;
@@ -603,7 +642,7 @@
 				status = "disabled";
 				reg = <0x0 0x1c000 0x0 0x20>;
 				interrupts = <GIC_SPI 39 IRQ_TYPE_EDGE_RISING>,
-					<GIC_SPI 50 IRQ_TYPE_EDGE_RISING>;
+					<GIC_SPI 95 IRQ_TYPE_EDGE_RISING>;
 				#address-cells = <1>;
 				#size-cells = <0>;
 				clocks = <&clkc CLKID_I2C>;
@@ -611,38 +650,26 @@
 			};
 
 			spicc0: spi@13000 {
-				compatible = "amlogic, spicc";
-				reg = <0x0 0x13000 0x0 0x40>;
+				compatible = "amlogic,meson-g12b-spicc",
+					     "amlogic,meson-g12a-spicc";
+				reg = <0x0 0x13000 0x0 0x44>;
 				interrupts = <GIC_SPI 81 IRQ_TYPE_LEVEL_HIGH>;
-				clock-names = "spicc_clk";
-				clocks = <&clkc CLKID_SPICC0_COMP>;
-				clk_rate = <666666666>;
-				device_id = <0>;
-				enhance = <1>;
-				ssctl = <0>;
-				dma_tx_threshold = <3>;
-				dma_num_per_read_burst = <13>;
-				dma_auto_param = <1>;
-				delay_control = <0x15>;
+				clocks = <&clkc CLKID_SPICC0>,
+					 <&clkc CLKID_SPICC0_COMP>;
+				clock-names = "core", "comp";
 				#address-cells = <1>;
 				#size-cells = <0>;
 				status = "disabled";
 			};
 
 			spicc1: spi@15000 {
-				compatible = "amlogic, spicc";
-				reg = <0x0 0x15000 0x0 0x40>;
+				compatible = "amlogic,meson-g12b-spicc",
+					     "amlogic,meson-g12a-spicc";
+				reg = <0x0 0x15000 0x0 0x44>;
 				interrupts = <GIC_SPI 90 IRQ_TYPE_LEVEL_HIGH>;
-				clock-names = "spicc_clk";
-				clocks = <&clkc CLKID_SPICC1_COMP>;
-				clk_rate = <666666666>;
-				device_id = <1>;
-				enhance = <1>;
-				ssctl = <0>;
-				dma_tx_threshold = <3>;
-				dma_num_per_read_burst = <13>;
-				dma_auto_param = <1>;
-				delay_control = <0x15>;
+				clocks = <&clkc CLKID_SPICC1>,
+					 <&clkc CLKID_SPICC1_COMP>;
+				clock-names = "core", "comp";
 				#address-cells = <1>;
 				#size-cells = <0>;
 				status = "disabled";
@@ -700,7 +727,8 @@
 				compatible = "amlogic,meson-g12b-i2c";
 				status = "disabled";
 				reg = <0x0 0x05000 0x0 0x20>;
-				interrupts = <GIC_SPI 195 IRQ_TYPE_EDGE_RISING>;
+				interrupts = <GIC_SPI 195 IRQ_TYPE_EDGE_RISING>,
+					<GIC_SPI 201 IRQ_TYPE_EDGE_RISING>;
 				#address-cells = <1>;
 				#size-cells = <0>;
 				clocks = <&clkc CLKID_I2C>;
@@ -1113,7 +1141,9 @@
 		pinctrl-1=<&eecec_b>;
 		pinctrl-2=<&eecec_b>;
 		reg = <0x0 0xFF80023c 0x0 0x4
-		       0x0 0xFF800000 0x0 0x400>;
+		       0x0 0xFF800000 0x0 0x400
+			0x0 0xFF634400 0x0 0x26>;
+			reg-names = "ao_exit","ao","periphs";
 	};
 
 	/*if you want to use vdin just modify status to "ok"*/
@@ -1512,17 +1542,17 @@
 			cooling_devices {
 				cpufreq_cool_cluster0 {
 					min_state = <1000000>;
-					dyn_coeff = <140>;
+					dyn_coeff = <120>;
 					cluster_id = <0>;
-					gpu_pp = <3>;
+					gpu_pp = <2>;
 					node_name = "cpufreq_cool0";
 					device_type = "cpufreq";
 				};
 				cpufreq_cool_cluster1 {
 					min_state = <1000000>;
-					dyn_coeff = <140>;
+					dyn_coeff = <460>;
 					cluster_id = <1>;
-					gpu_pp = <3>;
+					gpu_pp = <2>;
 					node_name = "cpufreq_cool1";
 					device_type = "cpufreq";
 				};
@@ -1530,7 +1560,7 @@
 					min_state = <1>;
 					dyn_coeff = <0>;
 					cluster_id = <0>;
-					gpu_pp = <3>;
+					gpu_pp = <2>;
 					node_name = "cpucore_cool0";
 					device_type = "cpucore";
 				};
@@ -1538,15 +1568,15 @@
 					min_state = <0>;
 					dyn_coeff = <0>;
 					cluster_id = <1>;
-					gpu_pp = <3>;
+					gpu_pp = <2>;
 					node_name = "cpucore_cool1";
 					device_type = "cpucore";
 				};
 				gpufreq_cool {
 					min_state = <400>;
-					dyn_coeff = <437>;
+					dyn_coeff = <358>;
 					cluster_id = <0>;
-					gpu_pp = <3>;
+					gpu_pp = <2>;
 					node_name = "gpufreq_cool0";
 					device_type = "gpufreq";
 				};
@@ -1554,7 +1584,7 @@
 					min_state = <1>;
 					dyn_coeff = <0>;
 					cluster_id = <0>;
-					gpu_pp = <3>;
+					gpu_pp = <2>;
 					node_name = "gpucore_cool0";
 					device_type = "gpucore";
 				};
@@ -1584,7 +1614,7 @@
 		soc_thermal: soc_thermal {
 			polling-delay = <1000>;
 			polling-delay-passive = <100>;
-			sustainable-power = <2150>;
+			sustainable-power = <3550>;
 			thermal-sensors = <&p_tsensor 0>;
 			trips {
 				pswitch_on: trip-point@0 {
@@ -1603,7 +1633,7 @@
 					type = "hot";
 				};
 				pcritical: trip-point@3 {
-					temperature = <150000>;
+					temperature = <110000>;
 					hysteresis = <1000>;
 					type = "critical";
 				};
@@ -1645,7 +1675,7 @@
 		ddr_thermal: ddr_thermal {
 			polling-delay = <1000>;
 			polling-delay-passive = <100>;
-			sustainable-power = <2150>;
+			sustainable-power = <3550>;
 			thermal-sensors = <&d_tsensor 1>;
 			trips {
 				dswitch_on: trip-point@0 {
@@ -1664,7 +1694,7 @@
 					type = "hot";
 				};
 				dcritical: trip-point@3 {
-					temperature = <150000>;
+					temperature = <110000>;
 					hysteresis = <1000>;
 					type = "critical";
 				};
@@ -1795,6 +1825,12 @@
 		       0x0 0xff638c00 0x0 0x100>;
 		interrupts = <0 52 1>;
 		interrupt-names = "ddr_bandwidth";
+	};
+	dmc_monitor {
+		compatible = "amlogic, dmc_monitor";
+		status = "okay";
+		reg_base = <0xff639000>;
+		interrupts = <0 51 1>;
 	};
 
 	isp_sc: isp-sc@ff655400 {
@@ -2363,6 +2399,7 @@
 				 //"spi0_ss0_x",
 				 "spi0_clk_x";
 			function = "spi0";
+			drive-strength = <1>;
 		};
 	};
 
@@ -2373,6 +2410,7 @@
 				 //"spi1_ss0",
 				 "spi1_clk";
 			function = "spi1";
+			drive-strength = <1>;
 		};
 	};
 
@@ -2483,6 +2521,10 @@
 			function = "remote_out";
 		};
 	};
+};
+
+&gpu{
+	system-coherency = <0>;
 };
 
 &pinctrl_aobus {

@@ -169,7 +169,7 @@ static struct lcd_config_s lcd_config_dft = {
 		.ss_level = 0,
 		.fr_adjust_type = 0,
 	},
-	.hdr_info = {
+	.optical_info = {
 		.hdr_support = 0,
 		.features = 0,
 		.primaries_r_x = 0,
@@ -191,10 +191,13 @@ static struct lcd_config_s lcd_config_dft = {
 		.mipi_config = &lcd_mipi_config,
 	},
 	.lcd_power = &lcd_power_config,
-	.pinmux_flag = 0,
+	.pinmux_flag = 0xff,
 	.change_flag = 0,
 	.retry_enable_flag = 0,
 	.retry_enable_cnt = 0,
+
+	.backlight_index = 0xff,
+	.extern_index = 0xff,
 };
 
 static struct vinfo_s lcd_vinfo = {
@@ -259,12 +262,12 @@ static void lcd_power_ctrl(int status)
 			if (ext_drv) {
 				if (status) {
 					if (ext_drv->power_on)
-						ext_drv->power_on(ext_drv);
+						ext_drv->power_on();
 					else
 						LCDERR("no ext power on\n");
 				} else {
 					if (ext_drv->power_off)
-						ext_drv->power_off(ext_drv);
+						ext_drv->power_off();
 					else
 						LCDERR("no ext power off\n");
 				}
@@ -328,7 +331,8 @@ static void lcd_power_screen_black(void)
 {
 	mutex_lock(&lcd_vout_mutex);
 
-	lcd_driver->lcd_screen_black();
+	lcd_driver->lcd_mute_flag = (unsigned char)(1 | LCD_MUTE_UPDATE);
+	LCDPR("set mute\n");
 
 	mutex_unlock(&lcd_vout_mutex);
 }
@@ -337,7 +341,8 @@ static void lcd_power_screen_restore(void)
 {
 	mutex_lock(&lcd_vout_mutex);
 
-	lcd_driver->lcd_screen_restore();
+	lcd_driver->lcd_mute_flag = (unsigned char)(0 | LCD_MUTE_UPDATE);
+	LCDPR("clear mute\n");
 
 	mutex_unlock(&lcd_vout_mutex);
 }
@@ -356,6 +361,8 @@ static void lcd_module_reset(void)
 	lcd_driver->lcd_status |= LCD_STATUS_ON;
 	lcd_driver->lcd_config->change_flag = 0;
 
+	lcd_driver->lcd_mute_flag = (unsigned char)(0 | LCD_MUTE_UPDATE);
+
 	mutex_unlock(&lcd_vout_mutex);
 }
 
@@ -366,6 +373,54 @@ static void lcd_resume_work(struct work_struct *p_work)
 	lcd_if_enable_retry(lcd_driver->lcd_config);
 	LCDPR("%s finished\n", __func__);
 	mutex_unlock(&lcd_driver->power_mutex);
+}
+
+static irqreturn_t lcd_vsync_isr(int irq, void *dev_id)
+{
+	int flag;
+#ifdef CONFIG_AMLOGIC_LCD_TABLET
+	struct lcd_config_s *pconf = lcd_driver->lcd_config;
+#endif
+
+	if ((lcd_driver->lcd_status & LCD_STATUS_ENCL_ON) == 0)
+		return IRQ_HANDLED;
+
+#ifdef CONFIG_AMLOGIC_LCD_TABLET
+	if (pconf->lcd_control.mipi_config->dread) {
+		if (pconf->lcd_control.mipi_config->dread->flag) {
+			lcd_mipi_test_read(
+				pconf->lcd_control.mipi_config->dread);
+			pconf->lcd_control.mipi_config->dread->flag = 0;
+		}
+	}
+#endif
+
+	if (lcd_driver->lcd_mute_flag & LCD_MUTE_UPDATE) {
+		flag = lcd_driver->lcd_mute_flag & 0x1;
+		if (flag) {
+			if (lcd_driver->lcd_mute_state == 0) {
+				lcd_driver->lcd_mute_state = 1;
+				lcd_driver->lcd_screen_black();
+			}
+		} else {
+			if (lcd_driver->lcd_mute_state) {
+				lcd_driver->lcd_mute_state = 0;
+				lcd_driver->lcd_screen_restore();
+			}
+		}
+		lcd_driver->lcd_mute_flag &= ~(LCD_MUTE_UPDATE);
+	}
+
+	if (lcd_driver->lcd_test_flag & LCD_TEST_UPDATE) {
+		flag = lcd_driver->lcd_test_flag & 0xf;
+		if (flag != lcd_driver->lcd_test_state) {
+			lcd_driver->lcd_test_state = (unsigned char)flag;
+			lcd_debug_test(flag);
+		}
+		lcd_driver->lcd_test_flag &= ~(LCD_TEST_UPDATE);
+	}
+
+	return IRQ_HANDLED;
 }
 
 /* ****************************************
@@ -517,13 +572,33 @@ static struct notifier_block lcd_bl_select_nb = {
 	.notifier_call = lcd_bl_select_notifier,
 };
 
+static int lcd_extern_select_notifier(struct notifier_block *nb,
+		unsigned long event, void *data)
+{
+	unsigned int *index;
+	struct lcd_config_s *pconf = lcd_driver->lcd_config;
+
+	if ((event & LCD_EVENT_EXTERN_SEL) == 0)
+		return NOTIFY_DONE;
+	/* LCDPR("%s: 0x%lx\n", __func__, event); */
+
+	index = (unsigned int *)data;
+	*index = pconf->extern_index;
+	if (pconf->lcd_basic.lcd_type == LCD_MIPI) {
+		if (*index == LCD_EXTERN_INDEX_INVALID)
+			*index = pconf->lcd_control.mipi_config->extern_init;
+	}
+
+	return NOTIFY_OK;
+}
+
+static struct notifier_block lcd_extern_select_nb = {
+	.notifier_call = lcd_extern_select_notifier,
+};
+
 static int lcd_notifier_register(void)
 {
 	int ret = 0;
-
-	ret = aml_lcd_notifier_register(&lcd_bl_select_nb);
-	if (ret)
-		LCDERR("register aml_bl_select_notifier failed\n");
 
 	ret = aml_lcd_notifier_register(&lcd_power_encl_on_nb);
 	if (ret)
@@ -544,6 +619,13 @@ static int lcd_notifier_register(void)
 	if (ret)
 		LCDERR("register lcd_power_screen_restore_nb failed\n");
 
+	ret = aml_lcd_notifier_register(&lcd_bl_select_nb);
+	if (ret)
+		LCDERR("register aml_bl_select_notifier failed\n");
+	ret = aml_lcd_notifier_register(&lcd_extern_select_nb);
+	if (ret)
+		LCDERR("register lcd_extern_select_nb failed\n");
+
 	return 0;
 }
 
@@ -557,6 +639,7 @@ static void lcd_notifier_unregister(void)
 	aml_lcd_notifier_unregister(&lcd_power_encl_on_nb);
 
 	aml_lcd_notifier_unregister(&lcd_bl_select_nb);
+	aml_lcd_notifier_unregister(&lcd_extern_select_nb);
 }
 /* **************************************** */
 
@@ -585,8 +668,9 @@ static long lcd_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	int ret = 0;
 	void __user *argp;
 	int mcd_nr;
-	struct lcd_hdr_info_s *hdr_info = &lcd_driver->lcd_config->hdr_info;
+	struct lcd_optical_info_s *opt_info;
 
+	opt_info = &lcd_driver->lcd_config->optical_info;
 	mcd_nr = _IOC_NR(cmd);
 	LCDPR("%s: cmd_dir = 0x%x, cmd_nr = 0x%x\n",
 		__func__, _IOC_DIR(cmd), mcd_nr);
@@ -594,17 +678,19 @@ static long lcd_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	argp = (void __user *)arg;
 	switch (mcd_nr) {
 	case LCD_IOC_NR_GET_HDR_INFO:
-		if (copy_to_user(argp, hdr_info, sizeof(struct lcd_hdr_info_s)))
+		if (copy_to_user(argp, opt_info,
+			sizeof(struct lcd_optical_info_s))) {
 			ret = -EFAULT;
+		}
 		break;
 	case LCD_IOC_NR_SET_HDR_INFO:
-		if (copy_from_user(hdr_info, argp,
-			sizeof(struct lcd_hdr_info_s))) {
+		if (copy_from_user(opt_info, argp,
+			sizeof(struct lcd_optical_info_s))) {
 			ret = -EFAULT;
 		} else {
-			lcd_hdr_vinfo_update();
+			lcd_optical_vinfo_update();
 			if (lcd_debug_print_flag) {
-				LCDPR("set hdr_info:\n"
+				LCDPR("set optical info:\n"
 					"hdr_support          %d\n"
 					"features             %d\n"
 					"primaries_r_x        %d\n"
@@ -617,18 +703,18 @@ static long lcd_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 					"white_point_y        %d\n"
 					"luma_max             %d\n"
 					"luma_min             %d\n\n",
-					hdr_info->hdr_support,
-					hdr_info->features,
-					hdr_info->primaries_r_x,
-					hdr_info->primaries_r_y,
-					hdr_info->primaries_g_x,
-					hdr_info->primaries_g_y,
-					hdr_info->primaries_b_x,
-					hdr_info->primaries_b_y,
-					hdr_info->white_point_x,
-					hdr_info->white_point_y,
-					hdr_info->luma_max,
-					hdr_info->luma_min);
+					opt_info->hdr_support,
+					opt_info->features,
+					opt_info->primaries_r_x,
+					opt_info->primaries_r_y,
+					opt_info->primaries_g_x,
+					opt_info->primaries_g_y,
+					opt_info->primaries_b_x,
+					opt_info->primaries_b_y,
+					opt_info->white_point_x,
+					opt_info->white_point_y,
+					opt_info->luma_max,
+					opt_info->luma_min);
 			}
 		}
 		break;
@@ -886,9 +972,22 @@ static int lcd_config_probe(struct platform_device *pdev)
 		LCDPR("detect lcd_clk_path: %d\n", lcd_driver->lcd_clk_path);
 	}
 
+	ret = of_property_read_u32(lcd_driver->dev->of_node, "auto_test", &val);
+	if (ret) {
+		if (lcd_debug_print_flag)
+			LCDPR("failed to get auto_test\n");
+		lcd_driver->lcd_auto_test = 0;
+	} else {
+		lcd_driver->lcd_auto_test = (unsigned char)val;
+		LCDPR("detect lcd_auto_test: %d\n", lcd_driver->lcd_auto_test);
+	}
+
 	lcd_driver->lcd_info = &lcd_vinfo;
 	lcd_driver->lcd_config = &lcd_config_dft;
+	lcd_driver->lcd_test_state = 0;
 	lcd_driver->lcd_test_flag = 0;
+	lcd_driver->lcd_mute_state = 0;
+	lcd_driver->lcd_mute_flag = 0;
 	lcd_driver->lcd_resume_type = 1; /* default workqueue */
 	lcd_driver->power_ctrl = lcd_power_ctrl;
 	lcd_driver->module_reset = lcd_module_reset;
@@ -922,6 +1021,28 @@ static int lcd_config_probe(struct platform_device *pdev)
 	return 0;
 }
 
+static int lcd_vsync_irq_init(void)
+{
+	if (!lcd_driver->res_vsync_irq) {
+		LCDERR("res_vsync_irq is null\n");
+		return -1;
+	}
+
+	if (request_irq(lcd_driver->res_vsync_irq->start, lcd_vsync_isr,
+		IRQF_SHARED, "lcd_vsync", (void *)"lcd_vsync"))
+		LCDERR("can't request lcd_vsync_irq\n");
+	else
+		LCDPR("request lcd_vsync_irq successful\n");
+
+	return 0;
+}
+
+static void lcd_vsync_irq_remove(void)
+{
+	if (lcd_driver->res_vsync_irq)
+		free_irq(lcd_driver->res_vsync_irq->start, (void *)"lcd_vsync");
+}
+
 #ifdef CONFIG_OF
 
 static struct lcd_data_s lcd_data_gxtvbb = {
@@ -939,6 +1060,12 @@ static struct lcd_data_s lcd_data_gxl = {
 static struct lcd_data_s lcd_data_gxm = {
 	.chip_type = LCD_CHIP_GXM,
 	.chip_name = "gxm",
+	.reg_map_table = &lcd_reg_gxb[0],
+};
+
+static struct lcd_data_s lcd_data_txl = {
+	.chip_type = LCD_CHIP_TXL,
+	.chip_name = "txl",
 	.reg_map_table = &lcd_reg_gxb[0],
 };
 
@@ -980,6 +1107,10 @@ static const struct of_device_id lcd_dt_match_table[] = {
 		.data = &lcd_data_gxm,
 	},
 	{
+		.compatible = "amlogic, lcd-txl",
+		.data = &lcd_data_txl,
+	},
+	{
 		.compatible = "amlogic, lcd-txlx",
 		.data = &lcd_data_txlx,
 	},
@@ -998,6 +1129,28 @@ static const struct of_device_id lcd_dt_match_table[] = {
 	{},
 };
 #endif
+
+static struct delayed_work lcd_test_delayed_work;
+static void lcd_auto_test_delayed(struct work_struct *work)
+{
+	LCDPR("%s\n", __func__);
+	mutex_lock(&lcd_driver->power_mutex);
+	aml_lcd_notifier_call_chain(LCD_EVENT_POWER_ON, NULL);
+	mutex_unlock(&lcd_driver->power_mutex);
+}
+
+static void lcd_auto_test(unsigned char flag)
+{
+	lcd_driver->lcd_test_state = flag;
+	if (lcd_driver->workqueue) {
+		queue_delayed_work(lcd_driver->workqueue,
+			&lcd_test_delayed_work,
+			msecs_to_jiffies(20000));
+	} else {
+		schedule_delayed_work(&lcd_test_delayed_work,
+			msecs_to_jiffies(20000));
+	}
+}
 
 static int lcd_probe(struct platform_device *pdev)
 {
@@ -1022,6 +1175,7 @@ static int lcd_probe(struct platform_device *pdev)
 		return -1;
 	}
 	lcd_driver->data = (struct lcd_data_s *)match->data;
+	strcpy(lcd_driver->version, LCD_DRV_VERSION);
 	LCDPR("driver version: %s(%d-%s)\n",
 		lcd_driver->version,
 		lcd_driver->data->chip_type,
@@ -1034,6 +1188,7 @@ static int lcd_probe(struct platform_device *pdev)
 	/* init workqueue */
 	INIT_DELAYED_WORK(&lcd_driver->lcd_probe_delayed_work,
 		lcd_config_probe_delayed);
+	INIT_DELAYED_WORK(&lcd_test_delayed_work, lcd_auto_test_delayed);
 	lcd_driver->workqueue = create_singlethread_workqueue("lcd_work_queue");
 	if (lcd_driver->workqueue == NULL)
 		LCDERR("can't create lcd workqueue\n");
@@ -1042,8 +1197,13 @@ static int lcd_probe(struct platform_device *pdev)
 
 	lcd_ioremap(pdev);
 	ret = lcd_config_probe(pdev);
+	lcd_vsync_irq_init();
 
 	LCDPR("%s %s\n", __func__, (ret ? "failed" : "ok"));
+
+	if (lcd_driver->lcd_auto_test)
+		lcd_auto_test(lcd_driver->lcd_auto_test);
+
 	return 0;
 }
 
@@ -1055,6 +1215,7 @@ static int lcd_remove(struct platform_device *pdev)
 		destroy_workqueue(lcd_driver->workqueue);
 
 	if (lcd_driver) {
+		lcd_vsync_irq_remove();
 		lcd_fops_remove();
 		lcd_class_remove();
 		lcd_config_remove(lcd_driver->dev);
@@ -1096,7 +1257,7 @@ static int lcd_resume(struct platform_device *pdev)
 static int lcd_suspend(struct platform_device *pdev, pm_message_t state)
 {
 	mutex_lock(&lcd_driver->power_mutex);
-	if (lcd_driver->lcd_status) {
+	if (lcd_driver->lcd_status & LCD_STATUS_ENCL_ON) {
 		aml_lcd_notifier_call_chain(LCD_EVENT_POWER_OFF, NULL);
 		lcd_resume_flag = 0;
 		LCDPR("%s finished\n", __func__);
@@ -1110,7 +1271,7 @@ static void lcd_shutdown(struct platform_device *pdev)
 	if (lcd_debug_print_flag)
 		LCDPR("%s\n", __func__);
 
-	if (lcd_driver->lcd_status)
+	if (lcd_driver->lcd_status & LCD_STATUS_ENCL_ON)
 		aml_lcd_notifier_call_chain(LCD_EVENT_POWER_OFF, NULL);
 }
 

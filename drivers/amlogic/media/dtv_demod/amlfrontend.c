@@ -37,6 +37,7 @@
 #include <linux/err.h>	/*IS_ERR*/
 #include <linux/clk.h>	/*clk tree*/
 #include <linux/of_device.h>
+#include <linux/of_reserved_mem.h>
 
 
 #ifdef ARC_700
@@ -2393,7 +2394,7 @@ static int gxtv_demod_dtmb_tune(struct dvb_frontend *fe, bool re_tune,
 {
 	/*struct dtv_frontend_properties *c = &fe->dtv_property_cache;*/
 	int ret = 0;
-	unsigned int up_delay;
+//	unsigned int up_delay;
 	unsigned int firstdetet;
 
 
@@ -2435,7 +2436,7 @@ static int gxtv_demod_dtmb_tune(struct dvb_frontend *fe, bool re_tune,
 		return ret;
 	}
 
-#if 0	/**/
+#if 1	/**/
 	*delay = HZ / 4;
 	gxtv_demod_dtmb_read_status_old(fe, status);
 #else	/*try polling*/
@@ -2743,6 +2744,10 @@ int dtvdemod_set_iccfg_by_dts(struct platform_device *pdev)
 
 	PR_DBG("%s:\n", __func__);
 
+	ret = of_reserved_mem_device_init(&pdev->dev);
+	if (ret != 0)
+		PR_INFO("no reserved mem.\n");
+
 
 	/*agc pinmux: option*/
 	ret = of_property_read_string(pdev->dev.of_node, "pinctrl-names",
@@ -3003,9 +3008,13 @@ static void dtvdemod_set_agc_pinmux(int on)
 	if (on) {
 		dtvdd_devp->pin = devm_pinctrl_get_select(dtvdd_devp->dev,
 							dtvdd_devp->pin_name);
+		if (IS_ERR(dtvdd_devp->pin)) {
+			dtvdd_devp->pin = NULL;
+			PR_ERR("get agc pins fail\n");
+		}
 	} else {
 		/*off*/
-		if (dtvdd_devp->pin != NULL) {
+		if (!IS_ERR_OR_NULL(dtvdd_devp->pin)) {
 			devm_pinctrl_put(dtvdd_devp->pin);
 			dtvdd_devp->pin = NULL;
 		}
@@ -3247,7 +3256,7 @@ static void __exit aml_dtvdemod_exit(void)
 	PR_INFO("[amldtvdemod..]%s: driver removed ok.\n", __func__);
 }
 
-
+#if 0
 static int delsys_confirm(struct dvb_frontend *fe)
 {
 	enum fe_delivery_system ldelsys = dtvdd_devp->last_delsys;
@@ -3345,7 +3354,9 @@ static int delsys_confirm(struct dvb_frontend *fe)
 	case SYS_DAB:
 	case SYS_TURBO:
 	case SYS_UNDEFINED:
+#ifdef CONFIG_AMLOGIC_DVB_COMPAT
 	case SYS_ANALOG:
+#endif
 		mode = AM_FE_UNKNOWN_N;
 		PR_INFO("delsys not support!%d=\n", cdelsys);
 		return 0;
@@ -3369,7 +3380,7 @@ static int delsys_confirm(struct dvb_frontend *fe)
 
 	return 0;
 }
-
+#endif
 static int delsys_set(struct dvb_frontend *fe, unsigned int delsys)
 {
 	enum fe_delivery_system ldelsys = dtvdd_devp->last_delsys;
@@ -3477,7 +3488,9 @@ static int delsys_set(struct dvb_frontend *fe, unsigned int delsys)
 	case SYS_DAB:
 	case SYS_TURBO:
 	case SYS_UNDEFINED:
+#ifdef CONFIG_AMLOGIC_DVB_COMPAT
 	case SYS_ANALOG:
+#endif
 		mode = AM_FE_UNKNOWN_N;
 		if (get_dtvpll_init_flag()) {
 			PR_INFO("delsys not support!%d=\n", cdelsys);
@@ -3510,7 +3523,10 @@ static int delsys_set(struct dvb_frontend *fe, unsigned int delsys)
 		fe->ops.info.type = FE_ATSC;
 	else if (mode == AM_FE_OFDM_N || mode == AM_FE_ISDBT_N)
 		fe->ops.info.type = FE_OFDM;
-
+	else if (mode == AM_FE_DTMB_N)
+		fe->ops.info.type = FE_DTMB;
+	else if (mode == AM_FE_QAM_N)
+		fe->ops.info.type = FE_QAM;
 	fe->ops.tuner_ops.set_config(fe, NULL);
 
 #endif
@@ -3541,6 +3557,16 @@ static int aml_dtvdm_init(struct dvb_frontend *fe)
 }
 static int aml_dtvdm_sleep(struct dvb_frontend *fe)
 {
+	enum aml_fe_n_mode_t nmode = dtvdd_devp->n_mode;
+
+	if (get_dtvpll_init_flag()) {
+		PR_INFO("%s\n", __func__);
+		leave_mode(nmode);
+		if (fe->ops.tuner_ops.release)
+			fe->ops.tuner_ops.release(fe);
+		dtvdd_devp->last_delsys = SYS_UNDEFINED;
+		dtvdd_devp->n_mode = AM_FE_UNKNOWN_N;
+	}
 	return 0;
 }
 static int aml_dtvdm_set_parameters(struct dvb_frontend *fe)
@@ -3550,7 +3576,7 @@ static int aml_dtvdm_set_parameters(struct dvb_frontend *fe)
 
 	PR_INFO("%s", __func__);
 
-	delsys_confirm(fe);
+	/*delsys_confirm(fe);*/
 	if (is_not_active(fe)) {
 		PR_DBG("set parm:not active\n");
 		return 0;
@@ -3912,6 +3938,15 @@ static void aml_dtvdm_release(struct dvb_frontend *fe)
 
 		break;
 	}
+
+	if (get_dtvpll_init_flag()) {
+		PR_INFO("%s\n", __func__);
+		leave_mode(nmode);
+		if (fe->ops.tuner_ops.release)
+			fe->ops.tuner_ops.release(fe);
+		dtvdd_devp->last_delsys = SYS_UNDEFINED;
+		dtvdd_devp->n_mode = AM_FE_UNKNOWN_N;
+	}
 }
 
 
@@ -3923,7 +3958,7 @@ static int aml_dtvdm_tune(struct dvb_frontend *fe, bool re_tune,
 	static int flg;	/*debug only*/
 
 	if (re_tune)
-		delsys_confirm(fe);
+		;//delsys_confirm(fe);
 
 	if (nmode == AM_FE_UNKNOWN_N) {
 		*delay = HZ * 5;
@@ -4037,10 +4072,10 @@ static struct dvb_frontend_ops aml_dtvdm_gxtvbb_ops = {
 };
 
 static struct dvb_frontend_ops aml_dtvdm_txl_ops = {
-	.delsys = { SYS_DVBC_ANNEX_A, SYS_DTMB},
+	.delsys = { SYS_DVBC_ANNEX_A, SYS_DTMB, SYS_ANALOG},
 	.info = {
 		/*in aml_fe, it is 'amlogic dvb frontend' */
-		.name = "amlogic dtv demod txlx",
+		.name = "amlogic dtv demod txl",
 		.frequency_min      = 51000000,
 		.frequency_max      = 900000000,
 		.frequency_stepsize = 0,
@@ -4073,8 +4108,12 @@ static struct dvb_frontend_ops aml_dtvdm_txl_ops = {
 };
 
 static struct dvb_frontend_ops aml_dtvdm_txlx_ops = {
+#ifdef CONFIG_AMLOGIC_DVB_COMPAT
 	.delsys = { SYS_ATSC, SYS_DVBC_ANNEX_B,  SYS_DVBC_ANNEX_A, SYS_DVBT,
 		SYS_ANALOG},
+#else
+	.delsys = { SYS_ATSC, SYS_DVBC_ANNEX_B,  SYS_DVBC_ANNEX_A, SYS_DVBT},
+#endif
 	.info = {
 		/*in aml_fe, it is 'amlogic dvb frontend' */
 		.name = "amlogic dtv demod txlx",

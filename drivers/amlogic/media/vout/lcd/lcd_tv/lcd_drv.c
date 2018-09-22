@@ -245,6 +245,14 @@ static void lcd_venc_set(struct lcd_config_s *pconf)
 
 	lcd_vcbus_write(ENCL_VIDEO_RGBIN_CTRL, 3);
 
+	/* default black pattern */
+	lcd_vcbus_write(ENCL_TST_MDSEL, 0);
+	lcd_vcbus_write(ENCL_TST_Y, 0);
+	lcd_vcbus_write(ENCL_TST_CB, 0);
+	lcd_vcbus_write(ENCL_TST_CR, 0);
+	lcd_vcbus_write(ENCL_TST_EN, 1);
+	lcd_vcbus_setb(ENCL_VIDEO_MODE_ADV, 0, 3, 1);
+
 	lcd_vcbus_write(ENCL_VIDEO_EN, 1);
 
 	aml_lcd_notifier_call_chain(LCD_EVENT_BACKLIGHT_UPDATE, NULL);
@@ -680,14 +688,9 @@ static void lcd_vbyone_interrupt_init(struct aml_lcd_drv_s *lcd_drv)
 	struct vbyone_config_s *vx1_conf;
 
 	vx1_conf = lcd_drv->lcd_config->lcd_control.vbyone_config;
+
 	/* release sw filter ctrl in uboot */
-	switch (lcd_drv->data->chip_type) {
-	case LCD_CHIP_TXLX:
-		lcd_vcbus_setb(VBO_INSGN_CTRL, 0, 0, 1);
-		break;
-	default:
-		break;
-	}
+	lcd_vcbus_setb(VBO_INSGN_CTRL, 0, 0, 1);
 
 	/* set hold in FSM_ACQ */
 	if (vx1_conf->vsync_intr_en == 3)
@@ -1264,7 +1267,7 @@ void lcd_tv_driver_init_pre(void)
 	lcd_clk_set(pconf);
 	lcd_venc_set(pconf);
 	lcd_encl_tcon_set(pconf);
-	lcd_mute_setting(1);
+	lcd_drv->lcd_mute_state = 1;
 
 	lcd_vcbus_write(VENC_INTCTRL, 0x200);
 

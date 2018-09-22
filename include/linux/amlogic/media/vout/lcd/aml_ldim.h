@@ -24,6 +24,35 @@
 #include <linux/amlogic/media/vout/lcd/aml_bl.h>
 #include <linux/spi/spi.h>
 
+/*#define LDIM_DEBUG_INFO*/
+#define LDIMPR(fmt, args...)     pr_info("ldim: "fmt"", ## args)
+#define LDIMERR(fmt, args...)    pr_err("ldim: error: "fmt"", ## args)
+
+
+#define LD_STA_BIN_NUM 16
+#define LD_STA_LEN_V   17
+/*  support maximum 16x4 regions for statistics (16+1) */
+#define LD_STA_LEN_H   25
+/*  support maximum 16x4 regions for statistics (24+1)*/
+#define LD_BLK_LEN_V   25
+/*  support maximum 16 led of each side left/right(16+4+4+1)*/
+#define LD_BLK_LEN_H   33
+/*  support maximum 24 led of each side top/bot  (24+4+4+1)*/
+#define LD_LUT_LEN     32
+#define LD_BLKHMAX     32
+#define LD_BLKVMAX     32
+
+
+#define LD_DATA_DEPTH   12
+#define LD_DATA_MIN     10
+#define LD_DATA_MAX     0xfff
+
+
+extern int  dirspi_write(struct spi_device *spi, u8 *buf, int len);
+extern int  dirspi_read(struct spi_device *spi, u8 *buf, int len);
+extern void dirspi_start(struct spi_device *spi);
+extern void dirspi_stop(struct spi_device *spi);
+
 #define _VE_LDIM  'C'
 
 /* VPP.ldim IOCTL command list */
@@ -69,14 +98,16 @@ struct ldim_dev_config_s {
 
 	struct bl_pwm_config_s pwm_config;
 
+	unsigned short bl_regnum;
 	unsigned short bl_mapping[LD_BLKREGNUM];
 };
 
 /*******global API******/
 struct aml_ldim_driver_s {
-	int valid_flag;
-	int dev_index;
-	int static_pic_flag;
+	unsigned char valid_flag;
+	unsigned char dev_index;
+	unsigned char static_pic_flag;
+	unsigned char pinmux_flag;
 
 	struct ldim_config_s *ldim_conf;
 	struct ldim_dev_config_s *ldev_conf;
@@ -89,7 +120,7 @@ struct aml_ldim_driver_s {
 	int (*power_on)(void);
 	int (*power_off)(void);
 	int (*set_level)(unsigned int level);
-	int (*pinmux_ctrl)(char *pin_str);
+	int (*pinmux_ctrl)(int status);
 	int (*pwm_vs_update)(void);
 	int (*device_power_on)(void);
 	int (*device_power_off)(void);

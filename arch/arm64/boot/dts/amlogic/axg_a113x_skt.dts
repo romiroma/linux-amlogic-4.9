@@ -42,6 +42,15 @@
 		#size-cells = <2>;
 		ranges;
 		/* global autoconfigured region for contiguous allocations */
+		ramoops@0x07400000 {
+			compatible = "ramoops";
+			reg = <0x0 0x07400000 0x0 0x00100000>;
+			record-size = <0x8000>;
+			console-size = <0x8000>;
+			ftrace-size = <0x0>;
+			pmsg-size = <0x8000>;
+		};
+
 		secmon_reserved:linux,secmon {
 			compatible = "shared-dma-pool";
 			reusable;
@@ -936,25 +945,6 @@
 	};
 }; /* end of pinctrl_periphs */
 /* Audio Related End */
-
-
-&spicc_a{
-	status = "disabled";
-	num_chipselect = <1>;
-	dma_en = <0>;
-	delay_control = <0x15>;
-	cs_delay = <10>;
-	enhance_dlyctl = <0>;
-};
-
-&spicc_b{
-	status = "disabled";
-	num_chipselect = <1>;
-	dma_en = <0>;
-	delay_control = <0x15>;
-	cs_delay = <10>;
-	enhance_dlyctl = <0>;
-};
 
 &aobus{
 	uart_AO: serial@3000 {

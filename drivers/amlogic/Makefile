@@ -7,8 +7,14 @@
 ## Do not change.
 ##########################################
 
+ifndef CONFIG_KASAN
 KBUILD_CFLAGS += -Wlarger-than=28792
 KBUILD_CFLAGS += -Wstack-usage=1856
+else
+ifeq ($(call cc-ifversion, -lt, 0500, y), y)
+    $(error -----GCC VERSION TOO SMALL FOR KASAN -----)
+endif
+endif
 
 # These 2 marked sentence is just for generate warning messages
 #KBUILD_CFLAGS += -Wno-error=larger-than=28792
@@ -48,6 +54,9 @@ obj-$(CONFIG_AMLOGIC_INPUT)		+= input/
 obj-$(CONFIG_AMLOGIC_EFUSE)             += efuse/
 
 obj-$(CONFIG_AMLOGIC_REBOOT)		+= reboot/
+
+obj-$(CONFIG_AMLOGIC_BATTERY_DUMMY)     += battery/
+obj-$(CONFIG_AMLOGIC_CHARGER_DUMMY)     += battery/
 
 obj-$(CONFIG_AMLOGIC_INTERNAL_PHY)	+= ethernet/phy/
 
@@ -122,3 +131,5 @@ obj-$(CONFIG_AMLOGIC_ATV_DEMOD) += atv_demod/
 obj-$(CONFIG_AMLOGIC_DEBUG) += debug/
 
 obj-$(CONFIG_AMLOGIC_DEFENDKEY) += defendkey/
+
+obj-$(CONFIG_MTD_SPI_NOR) += spi-nor/

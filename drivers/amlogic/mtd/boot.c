@@ -183,7 +183,7 @@ int m3_nand_boot_erase_cmd(struct mtd_info *mtd, int page)
 	struct nand_chip *chip = mtd->priv;
 	loff_t ofs;
 
-	ofs = (page << chip->page_shift);
+	ofs = (loff_t)(page << chip->page_shift);
 
 	if (chip->block_bad(mtd, ofs))
 		return -1;
@@ -222,7 +222,8 @@ int m3_nand_boot_read_page_hwecc(struct mtd_info *mtd,
 	struct _ext_info *p_ext_info = NULL;
 	struct nand_setup *p_nand_setup = NULL;
 	int each_boot_pages, boot_num;
-	loff_t ofs;
+	uint64_t ofs, tmp;
+	uint32_t remainder;
 
 	u8 type = aml_chip->new_nand_info.type;
 
@@ -269,6 +270,7 @@ int m3_nand_boot_read_page_hwecc(struct mtd_info *mtd,
 				pr_info("don't found selected chip:%d ready\n",
 					i);
 				error = -EBUSY;
+				goto exit;
 			}
 			if (aml_chip->ops_mode & AML_CHIP_NONE_RB)
 				chip->cmd_ctrl(mtd, NAND_CMD_READ0 & 0xff,
@@ -280,8 +282,10 @@ int m3_nand_boot_read_page_hwecc(struct mtd_info *mtd,
 			error = aml_chip->aml_nand_dma_read(aml_chip,
 				buf, nand_page_size, bch_mode);
 
-			if (error)
+			if (error) {
 				pr_info(" page0 aml_nand_dma_read failed\n");
+				goto exit;
+			}
 
 			aml_chip->aml_nand_get_user_byte(aml_chip,
 				oob_buf, user_byte_num);
@@ -303,6 +307,7 @@ int m3_nand_boot_read_page_hwecc(struct mtd_info *mtd,
 		} else {
 			pr_info("nand boot page 0 no valid chip failed\n");
 			error = -ENODEV;
+			goto exit;
 			/* goto exit; */
 		}
 
@@ -332,8 +337,10 @@ int m3_nand_boot_read_page_hwecc(struct mtd_info *mtd,
 	read_page = page;
 	read_page++;
 READ_BAD_BLOCK:
-	ofs = (read_page << chip->page_shift);
-	if (!(ofs % mtd->erasesize)) {
+	ofs = (uint64_t)(read_page << chip->page_shift);
+	tmp = ofs;
+	div_u64_rem(tmp, mtd->erasesize, &remainder);
+	if (!remainder) {
 		if (chip->block_bad(mtd, ofs)) {
 			read_page +=
 			1 << (chip->phys_erase_shift-chip->page_shift);
@@ -343,7 +350,9 @@ READ_BAD_BLOCK:
 
 	if (aml_chip->support_new_nand == 1) {
 		if (en_slc) {
-			read_page = page % each_boot_pages;
+			pages_per_blk =
+			(1 << (chip->phys_erase_shift - chip->page_shift));
+			read_page = page % pages_per_blk;
 			if (type == HYNIX_1YNM_8GB)
 				read_page =
 				pagelist_1ynm_hynix256_mtd[read_page + 1] +
@@ -493,7 +502,8 @@ int m3_nand_boot_write_page(struct mtd_info *mtd, struct nand_chip *chip,
 	uint32_t priv_slc_page;
 	int en_slc = 0, each_boot_pages, boot_num;
 	u8 type = aml_chip->new_nand_info.type;
-	loff_t ofs;
+	uint64_t ofs, tmp;
+	uint32_t remainder;
 
 	new_nand_info = &aml_chip->new_nand_info;
 	slc_program_info = &new_nand_info->slc_program_info;
@@ -519,13 +529,17 @@ int m3_nand_boot_write_page(struct mtd_info *mtd, struct nand_chip *chip,
 		}
 
 		if (en_slc) {
-			if (page >= (each_boot_pages/2 - 1))
+			if (page >= (each_boot_pages/2 - 1)) {
+				kfree(fill_buf);
 				return 0;
+			}
 		if (slc_program_info->enter_enslc_mode)
 			slc_program_info->enter_enslc_mode(mtd);
 		} else {
-			if (page >= (each_boot_pages - 1))
+			if (page >= (each_boot_pages - 1)) {
+				kfree(fill_buf);
 				return 0;
+			}
 		}
 		pages_per_blk = (1<<(chip->phys_erase_shift-chip->page_shift));
 	} else {
@@ -559,12 +573,14 @@ int m3_nand_boot_write_page(struct mtd_info *mtd, struct nand_chip *chip,
 		if (status & NAND_STATUS_FAIL) {
 			pr_info("uboot wr 0 page=0x%x, status=0x%x\n",
 				page, status);
+			kfree(fill_buf);
 			return -EIO;
 		}
 	}
 	/* +1 for skipping nand info page */
 	if (en_slc) {
 		if (aml_chip->support_new_nand == 1) {
+			page = page % pages_per_blk;
 			if (type == HYNIX_1YNM_8GB)
 				write_page =
 				pagelist_1ynm_hynix256_mtd[page + 1];
@@ -576,8 +592,10 @@ int m3_nand_boot_write_page(struct mtd_info *mtd, struct nand_chip *chip,
 		write_page++;
 
 WRITE_BAD_BLOCK:
-	ofs = (write_page << chip->page_shift);
-	if (!(ofs % mtd->erasesize)) {
+	ofs = (uint64_t)(write_page << chip->page_shift);
+	tmp = ofs;
+	div_u64_rem(tmp, mtd->erasesize, &remainder);
+	if (!remainder) {
 		if (chip->block_bad(mtd, ofs)) {
 			write_page +=
 			1 << (chip->phys_erase_shift-chip->page_shift);
@@ -622,6 +640,7 @@ WRITE_BAD_BLOCK:
 			if (en_slc && slc_program_info->exit_enslc_mode)
 				slc_program_info->exit_enslc_mode(mtd);
 		}
+			kfree(fill_buf);
 			return -EIO;
 		}
 	} else
@@ -631,6 +650,7 @@ WRITE_BAD_BLOCK:
 		if (en_slc && slc_program_info->exit_enslc_mode)
 			slc_program_info->exit_enslc_mode(mtd);
 	}
+	kfree(fill_buf);
 	return 0;
 }
 

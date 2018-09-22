@@ -281,11 +281,7 @@ static int __ref ddr_bandwidth_probe(struct platform_device *pdev)
 	if (pcnt < 0)
 		pr_err("can't find port descriptor,cpu:%d\n", aml_db->cpu_type);
 	else {
-		aml_db->port_desc = kcalloc(pcnt, sizeof(*desc), GFP_KERNEL);
-		if (!aml_db->port_desc)
-			goto inval;
-		pr_info("port count:%d, desc:%p\n", pcnt, aml_db->port_desc);
-		memcpy(aml_db->port_desc, desc, sizeof(*desc) * pcnt);
+		aml_db->port_desc = desc;
 		aml_db->real_ports = pcnt;
 	}
 
@@ -357,9 +353,9 @@ static int ddr_bandwidth_remove(struct platform_device *pdev)
 		class_destroy(&aml_ddr_class);
 		free_irq(aml_db->irq_num, aml_db);
 		kfree(aml_db->port_desc);
-		kfree(aml_db);
 		iounmap(aml_db->ddr_reg);
 		iounmap(aml_db->pll_reg);
+		kfree(aml_db);
 		aml_db = NULL;
 	}
 
@@ -370,7 +366,8 @@ static int ddr_bandwidth_remove(struct platform_device *pdev)
 static const struct of_device_id aml_ddr_bandwidth_dt_match[] = {
 	{
 		.compatible = "amlogic, ddr-bandwidth",
-	}
+	},
+	{}
 };
 #endif
 

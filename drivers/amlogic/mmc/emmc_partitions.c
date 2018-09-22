@@ -51,6 +51,8 @@
 #define	MAX_TRANS_SIZE		(MAX_TRANS_BLK * DTB_BLK_SIZE)
 #define stamp_after(a, b)	((int)(b) - (int)(a)  < 0)
 
+#define GPT_HEADER_SIGNATURE 0x5452415020494645ULL
+
 struct aml_dtb_rsv {
 	u8 data[DTB_BLK_SIZE*DTB_BLK_CNT - 4*sizeof(unsigned int)];
 	unsigned int magic;
@@ -62,6 +64,27 @@ struct aml_dtb_rsv {
 struct aml_dtb_info {
 	unsigned int stamp[2];
 	u8 valid[2];
+};
+
+struct  efi_guid_t {
+	u8 b[16];
+};
+
+struct gpt_header {
+	__le64 signature;
+	__le32 revision;
+	__le32 header_size;
+	__le32 header_crc32;
+	__le32 reserved1;
+	__le64 my_lba;
+	__le64 alternate_lba;
+	__le64 first_usable_lba;
+	__le64 last_usable_lba;
+	struct efi_guid_t disk_guid;
+	__le64 partition_entry_lba;
+	__le32 num_partition_entries;
+	__le32 sizeof_partition_entry;
+	__le32 partition_entry_array_crc32;
 };
 
 static dev_t amlmmc_dtb_no;
@@ -158,6 +181,7 @@ static int _dtb_init(struct mmc_card *mmc)
 	int cpy = 1, valid = 0;
 	int bit = mmc->csd.read_blkbits;
 	int blk;
+#ifdef CONFIG_ARM64
 	unsigned int pgcnt;
 	struct page *page = NULL;
 
@@ -168,6 +192,11 @@ static int _dtb_init(struct mmc_card *mmc)
 	if (!page)
 		return -ENOMEM;
 	dtb = page_address(page);
+#else
+	dtb = kmalloc(CONFIG_DTB_SIZE, GFP_KERNEL);
+	if (!dtb)
+		return -ENOMEM;
+#endif
 
 	/* read dtb2 1st, for compatibility without checksum. */
 	while (cpy >= 0) {
@@ -190,7 +219,11 @@ static int _dtb_init(struct mmc_card *mmc)
 	}
 	pr_info("total valid %d\n", valid);
 
+#ifdef CONFIG_ARM64
 	dma_release_from_contiguous(NULL, page, pgcnt);
+#else
+	kfree(dtb);
+#endif
 
 	return ret;
 }
@@ -220,8 +253,8 @@ int amlmmc_dtb_write(struct mmc_card *mmc,
 			pr_info("timestamp are not same %d:%d\n",
 				info->stamp[0], info->stamp[1]);
 			dtb->timestamp = 1 +
-				stamp_after(info->stamp[1], info->stamp[0]) ?
-				info->stamp[1]:info->stamp[0];
+				(stamp_after(info->stamp[1], info->stamp[0]) ?
+				info->stamp[1]:info->stamp[0]);
 		} else
 			dtb->timestamp = 1 + info->stamp[0];
 	}
@@ -260,10 +293,6 @@ int amlmmc_dtb_read(struct mmc_card *card,
 	memset(buf, 0x0, len);
 
 	start_blk = MMC_DTB_PART_OFFSET;
-	if (start_blk < 0) {
-		ret = -EINVAL;
-		return ret;
-	}
 
 	pgcnt = PAGE_ALIGN(CONFIG_DTB_SIZE) >> PAGE_SHIFT;
 
@@ -955,7 +984,7 @@ static int add_emmc_partition(struct gendisk *disk,
 			pr_info("[%s] %s: partition exceeds device capacity:\n",
 					__func__, disk->disk_name);
 
-			pr_info("\%20s	offset 0x%012llx, size 0x%012llx\n",
+			pr_info("%20s	offset 0x%012llx, size 0x%012llx\n",
 					pp->name, offset<<9, size<<9);
 
 			break;
@@ -1140,23 +1169,49 @@ int aml_emmc_partition_ops(struct mmc_card *card, struct gendisk *disk)
 	struct disk_part_iter piter;
 	struct hd_struct *part;
 	struct class *aml_store_class = NULL;
+	struct gpt_header *gpt_h = NULL;
+	unsigned char *buffer = NULL;
 
 	pr_info("Enter %s\n", __func__);
 
-	if (!is_card_emmc(card)) /* not emmc, nothing to do */
+	if (is_card_emmc(card) == 0) /* not emmc, nothing to do */
 		return 0;
 
+	buffer = kmalloc(512, GFP_KERNEL);
+	if (!buffer)
+		return -ENOMEM;
+
+	mmc_claim_host(card->host);
+
+	/*self adapting*/
+	ret = mmc_read_internal(card, 1, 1, buffer);
+	if (ret) {
+		pr_err("%s: save dtb error", __func__);
+		kfree(buffer);
+		goto out;
+	}
+
+	gpt_h = (struct gpt_header *) buffer;
+
+	if (le64_to_cpu(gpt_h->signature) == GPT_HEADER_SIGNATURE) {
+		kfree(buffer);
+		mmc_release_host(card->host);
+		return 0;
+	}
+
+	kfree(buffer);
+
 	store_device = host->storage_flag;
+
 	pt_fmt = kmalloc(sizeof(struct mmc_partitions_fmt), GFP_KERNEL);
 	if (pt_fmt == NULL) {
 		/*	pr_info(
 		 *	"[%s] malloc failed for struct mmc_partitions_fmt!\n",
 		 *	__func__);
 		 */
+		mmc_release_host(card->host);
 		return -ENOMEM;
 	}
-
-	mmc_claim_host(card->host);
 	disk_part_iter_init(&piter, disk, DISK_PITER_INCL_EMPTY);
 
 	while ((part = disk_part_iter_next(&piter))) {
@@ -1174,7 +1229,10 @@ int aml_emmc_partition_ops(struct mmc_card *card, struct gendisk *disk)
 
 	if (ret == 0) /* ok */
 		ret = emmc_key_init(card);
-
+	if (ret) {
+		kfree(pt_fmt);
+		goto out;
+	}
 	amlmmc_dtb_init(card);
 
 	aml_store_class = class_create(THIS_MODULE, "aml_store");

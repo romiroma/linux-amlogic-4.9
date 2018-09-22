@@ -258,8 +258,21 @@ static void dvb_frontend_add_event(struct dvb_frontend *fe,
 #ifdef CONFIG_AMLOGIC_DVB_COMPAT
 EXPORT_SYMBOL(dvb_frontend_add_event);
 #endif
+
+static int dvb_frontend_test_event(struct dvb_frontend_private *fepriv,
+				   struct dvb_fe_events *events)
+{
+	int ret;
+
+	up(&fepriv->sem);
+	ret = events->eventw != events->eventr;
+	down(&fepriv->sem);
+
+	return ret;
+}
+
 static int dvb_frontend_get_event(struct dvb_frontend *fe,
-			    struct dvb_frontend_event *event, int flags)
+			          struct dvb_frontend_event *event, int flags)
 {
 	struct dvb_frontend_private *fepriv = fe->frontend_priv;
 	struct dvb_fe_events *events = &fepriv->events;
@@ -277,13 +290,8 @@ static int dvb_frontend_get_event(struct dvb_frontend *fe,
 		if (flags & O_NONBLOCK)
 			return -EWOULDBLOCK;
 
-		up(&fepriv->sem);
-
-		ret = wait_event_interruptible (events->wait_queue,
-						events->eventw != events->eventr);
-
-		if (down_interruptible (&fepriv->sem))
-			return -ERESTARTSYS;
+		ret = wait_event_interruptible(events->wait_queue,
+					       dvb_frontend_test_event(fepriv, events));
 
 		if (ret < 0)
 			return ret;
@@ -1543,8 +1551,14 @@ static bool is_dvbv3_delsys(u32 delsys)
 {
 	bool status;
 
+#ifdef CONFIG_AMLOGIC_MODIFY /* added by Amlogic 20180720 */
+	status = (delsys == SYS_DVBT) || (delsys == SYS_DVBC_ANNEX_A) ||
+		 (delsys == SYS_DVBS) || (delsys == SYS_ATSC) ||
+		 (delsys == SYS_DTMB);
+#else
 	status = (delsys == SYS_DVBT) || (delsys == SYS_DVBC_ANNEX_A) ||
 		 (delsys == SYS_DVBS) || (delsys == SYS_ATSC);
+#endif
 
 	return status;
 }
@@ -2651,14 +2665,16 @@ static long dvb_frontend_compat_ioctl(struct file *filp,
 {
 	unsigned long ret;
 	struct dtv_properties tvps;
-
+#ifdef CONFIG_COMPAT
 	args  = (unsigned long)compat_ptr(args);
-
+#endif
 	if ((cmd == FE_SET_PROPERTY) || (cmd == FE_GET_PROPERTY)) {
 		if (copy_from_user(&tvps, (void *)args,
 			sizeof(struct dtv_properties)))
 			return -EFAULT;
+#ifdef CONFIG_COMPAT
 		tvps.props = compat_ptr((unsigned long)tvps.props);
+#endif
 		if (copy_to_user((void *)args, (void *)&tvps,
 			sizeof(struct dtv_properties)))
 			return -EFAULT;

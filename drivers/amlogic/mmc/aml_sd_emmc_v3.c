@@ -62,6 +62,9 @@ int meson_mmc_clk_init_v3(struct amlsd_host *host)
 	pclkc->div = 60;	 /* 400KHz */
 	pclkc->src = 0;	  /* 0: Crystal 24MHz */
 	pclkc->core_phase = init->core_phase;	  /* 2: 180 phase */
+	if ((host->mem->start == host->data->port_b_base)
+			&& (host->data->chip_type == MMC_CHIP_G12A))
+		pclkc->core_phase = 2;
 	pclkc->rx_phase = init->rx_phase;
 	pclkc->tx_phase = init->tx_phase;
 	pclkc->always_on = 1;	  /* Keep clock always on */
@@ -168,7 +171,7 @@ static int meson_mmc_clk_set_rate_v3(struct mmc_host *mmc,
 					host->mux_parent[0]);
 			if (ret)
 				pr_warn("set comp0 as mux_clk parent error\n");
-		} else if (clk_get_rate(host->mux_parent[0]) == 400000000) {
+		} else if (clk_get_rate(host->mux_parent[0]) > 200000000) {
 			pr_info("%s %d\n", __func__, __LINE__);
 			src0_clk = devm_clk_get(host->dev, "xtal");
 			ret = clk_set_parent(host->mux_parent[0], src0_clk);
@@ -309,17 +312,16 @@ void meson_mmc_set_ios_v3(struct mmc_host *mmc,
 	struct amlsd_platform *pdata = mmc_priv(mmc);
 	struct amlsd_host *host = pdata->host;
 
-#ifdef AML_MMC_TDMA
 	if ((host->mem->start == host->data->port_b_base)
-			&& (host->data->chip_type == MMC_CHIP_G12A))
+			&& host->data->tdma_f
+			&& (host->init_volt == 0))
 		wait_for_completion(&host->drv_completion);
-#endif
+
 	if (!pdata->is_in) {
-#ifdef AML_MMC_TDMA
 		if ((host->mem->start == host->data->port_b_base)
-				&& (host->data->chip_type == MMC_CHIP_G12A))
+				&& host->data->tdma_f
+				&& (host->init_volt == 0))
 			complete(&host->drv_completion);
-#endif
 		return;
 	}
 
@@ -339,11 +341,10 @@ void meson_mmc_set_ios_v3(struct mmc_host *mmc,
 		aml_cs_high(mmc);
 	else if (ios->chip_select == MMC_CS_DONTCARE)
 		aml_cs_dont_care(mmc);
-#ifdef AML_MMC_TDMA
 	if ((host->mem->start == host->data->port_b_base)
-			&& (host->data->chip_type == MMC_CHIP_G12A))
+			&& host->data->tdma_f
+			&& (host->init_volt == 0))
 		complete(&host->drv_completion);
-#endif
 }
 
 
@@ -375,11 +376,8 @@ irqreturn_t meson_mmc_irq_thread_v3(int irq, void *dev_id)
 	if (!mrq) {
 		pr_err("%s: !mrq xfer_step %d\n",
 				mmc_hostname(host->mmc), xfer_step);
-		if (xfer_step == XFER_FINISHED ||
-			xfer_step == XFER_TIMER_TIMEOUT){
 			spin_unlock_irqrestore(&host->mrq_lock, flags);
 			return IRQ_HANDLED;
-		}
 		/* aml_sd_emmc_print_err(host); */
 	}
 	/* process stop cmd we sent on porpos */
@@ -581,7 +579,6 @@ static int emmc_eyetest_log(struct mmc_host *mmc, u32 line_x)
 	u64 tmp = 0;
 	u32 blksz = 512;
 
-	host->is_tunning = 1;
 	pr_debug("delay1: 0x%x , delay2: 0x%x, line_x: %d\n",
 			readl(host->base + SD_EMMC_DELAY1_V3),
 			readl(host->base + SD_EMMC_DELAY2_V3), line_x);
@@ -601,12 +598,14 @@ RETRY:
 
 	/*****test start*************/
 	udelay(5);
+	host->is_tunning = 1;
 	if (line_x < 9)
 		aml_sd_emmc_cali_v3(mmc,
 			MMC_READ_MULTIPLE_BLOCK,
 			host->blk_test, blksz, 40);
 	else
 		aml_sd_emmc_cmd_v3(mmc);
+	host->is_tunning = 0;
 	udelay(1);
 	eyetest_log = readl(host->base + SD_EMMC_EYETEST_LOG);
 
@@ -635,7 +634,6 @@ RETRY:
 			readl(host->base + SD_EMMC_DELAY1_V3),
 			readl(host->base + SD_EMMC_DELAY2_V3),
 			pdata->align[line_x], line_x);
-	host->is_tunning = 0;
 	return 0;
 }
 
@@ -962,7 +960,6 @@ static int _aml_sd_emmc_execute_tuning(struct mmc_host *mmc, u32 opcode,
 					struct aml_tuning_data *tuning_data,
 					u32 adj_win_start)
 {
-#if 1 /* need finish later */
 	struct amlsd_platform *pdata = mmc_priv(mmc);
 	struct amlsd_host *host = pdata->host;
 	u32 vclk;
@@ -982,13 +979,15 @@ static int _aml_sd_emmc_execute_tuning(struct mmc_host *mmc, u32 opcode,
 	int wrap_win_start, wrap_win_size;
 	int best_win_start, best_win_size;
 	int curr_win_start, curr_win_size;
-	u32 rxdly[3] = {0xA28A28A, 0x15500514, 0x1FF8079E};
+	u32 old_dly, d1_dly, dly;
 
-#ifdef AML_MMC_TDMA
 	if ((host->mem->start == host->data->port_b_base)
-			&& (host->data->chip_type == MMC_CHIP_G12A))
+			&& host->data->tdma_f)
 		wait_for_completion(&host->drv_completion);
-#endif
+
+	old_dly = readl(host->base + SD_EMMC_DELAY1_V3);
+	d1_dly = (old_dly >> 0x6) & 0x3F;
+	pr_info("Data 1 aligned delay is %d\n", d1_dly);
 	writel(0, host->base + SD_EMMC_ADJUST_V3);
 
 tunning:
@@ -1049,7 +1048,6 @@ tunning:
 				curr_win_size = 0;
 			}
 		}
-
 	}
 	/* last point is ok! */
 	if (curr_win_start >= 0) {
@@ -1075,12 +1073,10 @@ tunning:
 			|| (clkc->div >= 10)) {
 			pr_info("%s: final result of tuning failed\n",
 				 mmc_hostname(host->mmc));
-#ifdef AML_MMC_TDMA
-	if ((host->mem->start == host->data->port_b_base)
-			&& (host->data->chip_type == MMC_CHIP_G12A))
-		complete(&host->drv_completion);
-#endif
-
+			host->is_tunning = 0;
+			if ((host->mem->start == host->data->port_b_base)
+				&& host->data->tdma_f)
+				complete(&host->drv_completion);
 			return -1;
 		}
 		clkc->div += 1;
@@ -1090,16 +1086,23 @@ tunning:
 			mmc_hostname(host->mmc));
 		goto tunning;
 	} else if (best_win_size == clk_div) {
-		if (++tuning_num > MAX_TUNING_RETRY) {
+		dly = readl(host->base + SD_EMMC_DELAY1_V3);
+		d1_dly = (dly >> 0x6) & 0x3F;
+		pr_warn("%s() d1_dly %d, window start %d, size %d\n",
+			__func__, d1_dly, best_win_start, best_win_size);
+		if (++d1_dly > 0x3F) {
 			pr_err("%s: tuning failed\n",
 				mmc_hostname(host->mmc));
+			host->is_tunning = 0;
+			if ((host->mem->start == host->data->port_b_base)
+				&& host->data->tdma_f)
+				complete(&host->drv_completion);
 			return -1;
 		}
-		pr_warn("wave is not sharp, again\n");
-		/* add basic data rx delay */
-		writel(rxdly[tuning_num-1], host->base + SD_EMMC_DELAY1_V3);
-		writel(rxdly[tuning_num-1], host->base + SD_EMMC_DELAY2_V3);
-		pr_warn("rxdly @ %x\n", rxdly[tuning_num-1]);
+		dly &= ~(0x3F << 6);
+		dly |= d1_dly << 6;
+		pdata->dly1 = dly;
+		writel(dly, host->base + SD_EMMC_DELAY1_V3);
 		goto tunning;
 	} else
 		pr_info("%s: best_win_start =%d, best_win_size =%d\n",
@@ -1116,20 +1119,19 @@ tunning:
 	gadjust->cali_rise = 0;
 	writel(adjust, host->base + SD_EMMC_ADJUST_V3);
 	pdata->adj = adjust;
-	host->is_tunning = 0;
-#ifdef AML_MMC_TDMA
-	if ((host->mem->start == host->data->port_b_base)
-			&& (host->data->chip_type == MMC_CHIP_G12A))
-		complete(&host->drv_completion);
-#endif
+	pdata->dly1 = old_dly;
+	writel(old_dly, host->base + SD_EMMC_DELAY1_V3);
 
 	pr_info("%s: sd_emmc_regs->gclock=0x%x,sd_emmc_regs->gadjust=0x%x\n",
 			mmc_hostname(host->mmc),
 			readl(host->base + SD_EMMC_CLOCK_V3),
 			readl(host->base + SD_EMMC_ADJUST_V3));
+	host->is_tunning = 0;
+	if ((host->mem->start == host->data->port_b_base)
+			&& host->data->tdma_f)
+		complete(&host->drv_completion);
+
 	return ret;
-#endif
-	return 0;
 }
 
 int aml_get_data_eyetest(struct mmc_host *mmc)
@@ -1191,7 +1193,7 @@ int aml_emmc_hs200_timming(struct mmc_host *mmc)
 	struct amlsd_host *host = pdata->host;
 	u32 count = 0, delay1 = 0, delay2 = 0;
 	u32 dat = host->data->latest_dat;
-	int ret = 0;
+	int ret = 0, add = 0;
 
 	ret = aml_get_data_eyetest(mmc);
 	if (ret) {
@@ -1203,21 +1205,27 @@ int aml_emmc_hs200_timming(struct mmc_host *mmc)
 	delay2 = readl(host->base + SD_EMMC_DELAY2_V3);
 	if (pdata->latest_dat != 0)
 		dat = pdata->latest_dat;
+	if (dat < 5)
+		add = (delay1 >> (dat * 6)) & 0x3f;
+	else
+		add = (delay2 >> (dat * 6)) & 0x3f;
 	count = fbinary(pdata->align[dat]);
-	if (count <= pdata->count/3)
+	if (count <= pdata->count/3) {
 		count = pdata->count/3 - count;
-	else if (count <= (pdata->count*2)/3)
+		if (add)
+			count += add;
+	} else if (count <= (pdata->count*2)/3)
 		count = 0;
 	else
-		count = pdata->count/2;
+		count = (pdata->count - count) + pdata->count/3;
 	delay1 = (count<<0)|(count<<6)|(count<<12)
 		|(count<<18)|(count<<24);
 	writel(delay1, (host->base + SD_EMMC_DELAY1_V3));
 	delay2 = (count<<0)|(count<<6)|(count<<12);
 	writel(delay2, (host->base + SD_EMMC_DELAY2_V3));
-	pr_info("delay1: 0x%x , delay2: 0x%x\n",
+	pr_info("delay1: 0x%x, delay2: 0x%x, add:%d\n",
 		readl(host->base + SD_EMMC_DELAY1_V3),
-		readl(host->base + SD_EMMC_DELAY2_V3));
+		readl(host->base + SD_EMMC_DELAY2_V3), add);
 
 	count = fbinary(pdata->align[9]);
 	if (count <= pdata->count/4)
@@ -1253,7 +1261,6 @@ static int sdio_eyetest_log(struct mmc_host *mmc, u32 line_x, u32 opcode,
 	const u8 *blk_pattern = tuning_data->blk_pattern;
 	unsigned int blksz = tuning_data->blksz;
 
-	host->is_tunning = 1;
 	/****** calculate  line_x ***************************/
 	/******* init eyetest register ************************/
 	pr_debug("delay1: 0x%x , delay2: 0x%x, line_x: %d\n",
@@ -1271,9 +1278,11 @@ RETRY:
 	pdata->intf3 = intf3;
 	udelay(5);
 
+	host->is_tunning = 1;
 	for (i = 0; i < 40; i++)
 		aml_sd_emmc_tuning_transfer(mmc, opcode,
 				blk_pattern, host->blk_test, blksz);
+	host->is_tunning = 0;
 	udelay(1);
 	eyetest_log = readl(host->base + SD_EMMC_EYETEST_LOG);
 	eyetest_out0 = readl(host->base + SD_EMMC_EYETEST_OUT0);
@@ -1302,7 +1311,6 @@ RETRY:
 	pdata->intf3 = intf3;
 	pdata->align[line_x] = ((tmp | eyetest_out1) << 32) | eyetest_out0;
 	pr_debug("u64 eyetestout 0x%llx\n", pdata->align[line_x]);
-	host->is_tunning = 0;
 	return 0;
 }
 
@@ -1315,7 +1323,6 @@ static int aml_sdio_timing(struct mmc_host *mmc, u32 opcode,
 	u32 line_x = 0, delay1 = 0, retry = 1, temp;
 	int ret;
 
-	host->is_tunning = 1;
 	delay1 = 0;
 	for (line_x = 0; line_x < 4; line_x++) {
 		writel(0, host->base + SD_EMMC_DELAY1_V3);
@@ -1356,7 +1363,6 @@ RETRY:
 	writel(delay1, host->base + SD_EMMC_DELAY1_V3);
 	pdata->dly1 = delay1;
 
-	host->is_tunning = 0;
 	pr_info("%s: gadjust=0x%x, gdelay1=0x%x, gclock=0x%x\n",
 			mmc_hostname(host->mmc),
 			readl(host->base + SD_EMMC_ADJUST_V3),

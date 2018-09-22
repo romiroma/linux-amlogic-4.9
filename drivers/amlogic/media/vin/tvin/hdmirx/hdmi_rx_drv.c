@@ -46,6 +46,9 @@
 #include <linux/amlogic/media/frame_provider/tvin/tvin.h>
 /*#include <linux/amlogic/amports/vframe.h>*/
 #include <linux/of_gpio.h>
+#ifdef CONFIG_AMLOGIC_LEGACY_EARLY_SUSPEND
+#include <linux/amlogic/pm.h>
+#endif
 
 /* Local include */
 #include "hdmi_rx_drv.h"
@@ -133,6 +136,13 @@ int vdin_drop_frame_cnt = 1;
  * other value: keep previous logic
  */
 int suspend_pddq_sel = 1;
+/* as cvt required, set hpd low if cec off when boot */
+static int hpd_low_cec_off = 1;
+int disable_port_num;
+int disable_port_en;
+#ifdef CONFIG_AMLOGIC_LEGACY_EARLY_SUSPEND
+static bool early_suspend_flag;
+#endif
 
 struct reg_map reg_maps[MAP_ADDR_MODULE_NUM];
 
@@ -166,7 +176,7 @@ static const struct of_device_id hdmirx_dt_match[] = {
 		.data           = &rx_txlx_data
 	},
 	{
-		.compatible     = "amlogic, hdmirx_txl",
+		.compatible     = "amlogic, hdmirx-txl",
 		.data           = &rx_txl_data
 	},
 	{
@@ -318,8 +328,13 @@ void hdmirx_dec_close(struct tvin_frontend_s *fe)
 	struct hdmirx_dev_s *devp;
 	struct tvin_parm_s *parm;
 
-	/* should disable the adc ref signal for audio pll */
-	vdac_enable(0, 0x10);
+	/*
+	 * txl:should disable the adc ref signal for audio pll
+	 * txlx:dont disable the adc ref signal for audio pll(not
+	 *	reset the vdac) to avoid noise issue
+	 */
+	if (rx.chip_id == CHIP_ID_TXL)
+		vdac_enable(0, 0x10);
 
 	/* open_flage = 0; */
 	rx.open_fg = 0;
@@ -567,6 +582,9 @@ void hdmirx_set_timing_info(struct tvin_sig_property_s *prop)
 		prop->ve = 1;
 }
 
+/*
+ * hdmirx_get_connect_info - get 5v info
+ */
 int hdmirx_get_connect_info(void)
 {
 	return pwr_sts;
@@ -906,24 +924,25 @@ static long hdmirx_ioctl(struct file *file, unsigned int cmd,
 	}
 	case HDMI_IOC_HDCP_ON:
 		hdcp_enable = 1;
-		rx_set_hpd(0);
+		rx_set_cur_hpd(0);
 		fsm_restart();
 		break;
 	case HDMI_IOC_HDCP_OFF:
 		hdcp_enable = 0;
-		rx_set_hpd(0);
+		rx_set_cur_hpd(0);
 		hdmirx_hw_config();
+		hdmi_rx_top_edid_update();
 		fsm_restart();
 		break;
 	case HDMI_IOC_EDID_UPDATE:
 		if (rx.open_fg) {
-			rx_set_hpd(0);
+			rx_set_cur_hpd(0);
 			edid_update_flag = 1;
 		}
 		#if 0
 		else {
 			if (hdmi_cec_en) {
-				if (is_meson_gxtvbb_cpu())
+				if (rx.chip_id == CHIP_ID_GXTVBB)
 					rx_force_hpd_cfg(0);
 				else
 					rx_force_hpd_cfg(1);
@@ -1017,6 +1036,15 @@ static long hdmirx_ioctl(struct file *file, unsigned int cmd,
 			}
 		}
 		/*mutex_unlock(&pktbuff_lock);*/
+		break;
+	case HDMI_IOC_HDCP14_KEY_MODE:
+		if (copy_from_user(&hdcp14_key_mode, argp,
+			sizeof(enum hdcp14_key_mode_e))) {
+			ret = -EFAULT;
+			pr_info("HDMI_IOC_HDCP14_KEY_MODE err\n\n");
+			break;
+		}
+		rx_pr("hdcp1.4 key mode-%d\n", hdcp14_key_mode);
 		break;
 	default:
 		ret = -ENOIOCTLCMD;
@@ -1318,14 +1346,20 @@ static ssize_t cec_set_state(struct device *dev,
 	cnt = kstrtoint(buf, 0, &val);
 	if (cnt < 0 || val > 0xff)
 		return -EINVAL;
-	if (val == 0)
+	if (val == 0) {
 		hdmi_cec_en = 0;
-	else if (val == 1)
+		/* fix source can't get edid if cec off */
+		if (rx.boot_flag) {
+			if (hpd_low_cec_off == 0)
+				rx_force_hpd_rxsense_cfg(1);
+		}
+	} else if (val == 1)
 		hdmi_cec_en = 1;
 	else if (val == 2) {
 		hdmi_cec_en = 1;
-		rx_force_hpd_cfg(1);
+		rx_force_hpd_rxsense_cfg(1);
 	}
+	rx.boot_flag = false;
 	rx_pr("cec sts = %d\n", val);
 	return count;
 }
@@ -1492,17 +1526,67 @@ static int hdmirx_switch_pinmux(struct device *dev)
 	}
 	return ret;
 }
-#ifdef CONFIG_HAS_EARLYSUSPEND
+
+static void rx_phy_suspend(void)
+{
+	/* set HPD low when cec off. */
+	if (!hdmi_cec_en)
+		rx_set_port_hpd(ALL_PORTS, 0);
+	if (suspend_pddq_sel == 0)
+		rx_pr("don't set phy pddq down\n");
+	else {
+		/* there's no SDA low issue on MTK box when CEC off */
+		if (hdmi_cec_en != 0) {
+			if (suspend_pddq_sel == 2) {
+				/* set rxsense pulse */
+				hdmirx_phy_pddq(1);
+				mdelay(10);
+				hdmirx_phy_pddq(0);
+				mdelay(10);
+			}
+		}
+		/* phy powerdown */
+		hdmirx_phy_pddq(1);
+	}
+}
+
+static void rx_phy_resume(void)
+{
+	if (hdmi_cec_en != 0) {
+		if (suspend_pddq_sel == 1) {
+			/* set rxsense pulse, if delay time between
+			 * rxsense pulse and phy_int shottern than
+			 * 50ms, SDA may be pulled low 800ms on MTK box
+			 */
+			hdmirx_phy_pddq(0);
+			msleep(20);
+			hdmirx_phy_pddq(1);
+			msleep(50);
+		}
+	}
+	hdmirx_phy_init();
+	pre_port = 0xff;
+	rx.boot_flag = true;
+}
+
+#ifdef CONFIG_AMLOGIC_LEGACY_EARLY_SUSPEND
 static void hdmirx_early_suspend(struct early_suspend *h)
 {
+	if (early_suspend_flag)
+		return;
+
+	early_suspend_flag = true;
+	rx_phy_suspend();
 	rx_pr("hdmirx_early_suspend ok\n");
 }
 
 static void hdmirx_late_resume(struct early_suspend *h)
 {
-	/* after early suspend & late resuem, also need to */
-	/* do hpd reset when open port for hdcp compliance */
-	pre_port = 0xff;
+	if (!early_suspend_flag)
+		return;
+
+	early_suspend_flag = false;
+	rx_phy_resume();
 	rx_pr("hdmirx_late_resume ok\n");
 };
 
@@ -1525,6 +1609,7 @@ static int hdmirx_probe(struct platform_device *pdev)
 	struct clk *tmds_clk_fs;
 	int clk_rate;
 	const struct of_device_id *of_id;
+	int disable_port;
 
 	log_init(DEF_LOG_BUF_SIZE);
 	pEdid_buffer = (unsigned char *) pdev->dev.platform_data;
@@ -1720,7 +1805,8 @@ static int hdmirx_probe(struct platform_device *pdev)
 			clk_rate = clk_get_rate(hdevp->skp_clk);
 		}
 	}
-	if (is_meson_txlx_cpu() || is_meson_txhd_cpu()) {
+	if ((rx.chip_id == CHIP_ID_TXLX) ||
+		(rx.chip_id == CHIP_ID_TXHD)) {
 		tmds_clk_fs = clk_get(&pdev->dev, "hdmirx_aud_pll2fs");
 		if (IS_ERR(tmds_clk_fs))
 			rx_pr("get tmds_clk_fs err\n");
@@ -1787,9 +1873,23 @@ static int hdmirx_probe(struct platform_device *pdev)
 	if (ret)
 		en_4k_timing = 1;
 
+	ret = of_property_read_u32(pdev->dev.of_node,
+				"hpd_low_cec_off", &hpd_low_cec_off);
+	if (ret)
+		hpd_low_cec_off = 1;
+	ret = of_property_read_u32(pdev->dev.of_node,
+				"disable_port", &disable_port);
+	if (ret) {
+		/* don't disable port if dts not indicate */
+		disable_port_en = 0;
+	} else {
+		/* bit4: enable feature, bit3~0: port_num */
+		disable_port_en = (disable_port >> 4) & 0x1;
+		disable_port_num = disable_port & 0xF;
+	}
 	hdmirx_hw_probe();
 	hdmirx_switch_pinmux(&(pdev->dev));
-#ifdef CONFIG_HAS_EARLYSUSPEND
+#ifdef CONFIG_AMLOGIC_LEGACY_EARLY_SUSPEND
 	register_early_suspend(&hdmirx_early_suspend_handler);
 #endif
 	mutex_init(&hdevp->rx_lock);
@@ -1852,7 +1952,7 @@ static int hdmirx_remove(struct platform_device *pdev)
 	cancel_delayed_work_sync(&esm_dwork);
 	destroy_workqueue(esm_wq);
 
-#ifdef CONFIG_HAS_EARLYSUSPEND
+#ifdef CONFIG_AMLOGIC_LEGACY_EARLY_SUSPEND
 	unregister_early_suspend(&hdmirx_early_suspend_handler);
 #endif
 	mutex_destroy(&hdevp->rx_lock);
@@ -1903,31 +2003,15 @@ static int hdmirx_suspend(struct platform_device *pdev, pm_message_t state)
 	struct hdmirx_dev_s *hdevp;
 
 	hdevp = platform_get_drvdata(pdev);
-	rx_pr("[hdmirx]: hdmirx_suspend\n");
 	del_timer_sync(&hdevp->timer);
-	/* set HPD low when cec off. */
-	if (!hdmi_cec_en)
-		rx_force_hpd_cfg(0);
-
-	if (suspend_pddq_sel == 0)
-		rx_pr("don't set phy pddq down\n");
-	else {
-		/* there's no SDA low issue on MTK box when CEC off */
-		if (hdmi_cec_en != 0) {
-			if (suspend_pddq_sel == 2) {
-				/* set rxsense pulse */
-				mdelay(10);
-				hdmirx_phy_pddq(1);
-				mdelay(10);
-				hdmirx_phy_pddq(0);
-			}
-		}
-		/* phy powerdown */
-		hdmirx_phy_pddq(1);
-	}
+#ifdef CONFIG_AMLOGIC_LEGACY_EARLY_SUSPEND
+	/* if early suspend not called, need to pw down phy here */
+	if (!early_suspend_flag)
+#endif
+		rx_phy_suspend();
 	if (hdcp22_on)
 		hdcp22_suspend();
-	rx_pr("[hdmirx]: suspend success\n");
+	rx_pr("hdmirx: suspend success\n");
 	return 0;
 }
 
@@ -1936,25 +2020,15 @@ static int hdmirx_resume(struct platform_device *pdev)
 	struct hdmirx_dev_s *hdevp;
 
 	hdevp = platform_get_drvdata(pdev);
-	if (hdmi_cec_en != 0) {
-		if (suspend_pddq_sel == 1) {
-			/* set rxsense pulse, if delay time between
-			 * rxsense pulse and phy_int shottern than
-			 * 50ms, SDA may be pulled low 800ms on MTK box
-			 */
-			hdmirx_phy_pddq(0);
-			mdelay(10);
-			hdmirx_phy_pddq(1);
-			mdelay(50);
-		}
-	}
-	hdmirx_phy_init();
 	add_timer(&hdevp->timer);
+#ifdef CONFIG_AMLOGIC_LEGACY_EARLY_SUSPEND
+	/* if early suspend not called, need to pw up phy here */
+	if (!early_suspend_flag)
+#endif
+		rx_phy_resume();
 	if (hdcp22_on)
 		hdcp22_resume();
 	rx_pr("hdmirx: resume\n");
-	pre_port = 0xff;
-	rx.boot_flag = true;
 	return 0;
 }
 #endif
@@ -1968,7 +2042,7 @@ static void hdmirx_shutdown(struct platform_device *pdev)
 	del_timer_sync(&hdevp->timer);
 	/* set HPD low when cec off. */
 	if (!hdmi_cec_en)
-		rx_force_hpd_cfg(0);
+		rx_set_port_hpd(ALL_PORTS, 0);
 	/* phy powerdown */
 	hdmirx_phy_pddq(1);
 	if (hdcp22_on)

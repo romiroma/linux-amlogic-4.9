@@ -78,10 +78,11 @@ enum lcd_chip_e {
 	LCD_CHIP_GXTVBB = 0,
 	LCD_CHIP_GXL,   /* 1 */
 	LCD_CHIP_GXM,   /* 2 */
-	LCD_CHIP_TXLX,  /* 3 */
-	LCD_CHIP_AXG,   /* 4 */
-	LCD_CHIP_G12A,  /* 5 */
-	LCD_CHIP_G12B,  /* 6 */
+	LCD_CHIP_TXL,	/* 3 */
+	LCD_CHIP_TXLX,  /* 4 */
+	LCD_CHIP_AXG,   /* 5 */
+	LCD_CHIP_G12A,  /* 6 */
+	LCD_CHIP_G12B,  /* 7 */
 	LCD_CHIP_MAX,
 };
 
@@ -172,7 +173,7 @@ struct lcd_timing_s {
  * HDR info define
  * **********************************
  */
-struct lcd_hdr_info_s {
+struct lcd_optical_info_s {
 	unsigned int hdr_support;
 	unsigned int features;
 	unsigned int primaries_r_x;
@@ -266,6 +267,18 @@ struct vbyone_config_s {
 #define DSI_INIT_ON_MAX          100
 #define DSI_INIT_OFF_MAX         30
 
+#define DSI_READ_CNT_MAX         30
+struct dsi_read_s {
+	unsigned char flag;
+	unsigned char reg;
+	unsigned char cnt;
+	unsigned char *value;
+	unsigned char ret_code;
+
+	unsigned int line_start;
+	unsigned int line_end;
+};
+
 struct dsi_config_s {
 	unsigned char lane_num;
 	unsigned int bit_rate_max; /* MHz */
@@ -293,6 +306,8 @@ struct dsi_config_s {
 	unsigned char check_state;
 
 	unsigned char current_mode;
+
+	struct dsi_read_s *dread;
 };
 
 struct lcd_control_config_s {
@@ -369,9 +384,10 @@ struct lcd_clk_gate_ctrl_s {
 struct lcd_config_s {
 	char *lcd_propname;
 	unsigned int backlight_index;
+	unsigned int extern_index;
 	struct lcd_basic_s lcd_basic;
 	struct lcd_timing_s lcd_timing;
-	struct lcd_hdr_info_s hdr_info;
+	struct lcd_optical_info_s optical_info;
 	struct lcd_control_config_s lcd_control;
 	struct lcd_power_ctrl_s *lcd_power;
 	struct pinctrl *pin;
@@ -392,17 +408,22 @@ struct lcd_duration_s {
 #define LCD_STATUS_VMODE_ACTIVE  (1 << 2)
 #define LCD_STATUS_ON         (LCD_STATUS_IF_ON | LCD_STATUS_ENCL_ON)
 
+#define LCD_MUTE_UPDATE       (1 << 4)
+#define LCD_TEST_UPDATE       (1 << 4)
 struct aml_lcd_drv_s {
-	char *version;
+	char version[20];
 	struct lcd_data_s *data;
 	unsigned char lcd_mode;
 	unsigned char lcd_status;
 	unsigned char lcd_key_valid;
 	unsigned char lcd_clk_path; /* 0=hpll, 1=gp0_pll */
 	unsigned char lcd_config_load;
-	unsigned char lcd_test_flag;
 	unsigned char lcd_resume_type; /* 0=directly, 1=workqueue */
-	unsigned char lcd_mute;
+	unsigned char lcd_auto_test;
+	unsigned char lcd_test_state;
+	unsigned char lcd_test_flag;
+	unsigned char lcd_mute_state;
+	unsigned char lcd_mute_flag;
 
 	unsigned char clk_gate_state;
 	struct clk *encl_top_gate;
@@ -413,6 +434,7 @@ struct aml_lcd_drv_s {
 	struct clk *dsi_meas;
 	struct clk *mipi_enable_gate;
 	struct clk *mipi_bandgap_gate;
+	struct clk *gp0_pll;
 
 	struct device *dev;
 	struct lcd_config_s *lcd_config;
@@ -454,8 +476,8 @@ extern struct aml_lcd_drv_s *aml_lcd_get_driver(void);
 #define LCD_IOC_NR_SET_HDR_INFO    0x1
 
 #define LCD_IOC_CMD_GET_HDR_INFO   \
-	_IOR(LCD_IOC_TYPE, LCD_IOC_NR_GET_HDR_INFO, struct lcd_hdr_info_s)
+	_IOR(LCD_IOC_TYPE, LCD_IOC_NR_GET_HDR_INFO, struct lcd_optical_info_s)
 #define LCD_IOC_CMD_SET_HDR_INFO   \
-	_IOW(LCD_IOC_TYPE, LCD_IOC_NR_SET_HDR_INFO, struct lcd_hdr_info_s)
+	_IOW(LCD_IOC_TYPE, LCD_IOC_NR_SET_HDR_INFO, struct lcd_optical_info_s)
 
 #endif

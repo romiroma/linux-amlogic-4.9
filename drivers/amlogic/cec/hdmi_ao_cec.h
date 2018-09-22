@@ -18,7 +18,7 @@
 #ifndef __AO_CEC_H__
 #define __AO_CEC_H__
 
-#define CEC_DRIVER_VERSION	"Ver**2018/07/03**\n"
+#define CEC_DRIVER_VERSION	"Ver 2018/08/30\n"
 
 #define CEC_FRAME_DELAY		msecs_to_jiffies(400)
 #define CEC_DEV_NAME		"cec"
@@ -28,17 +28,27 @@
 
 #define HR_DELAY(n)		(ktime_set(0, n * 1000 * 1000))
 
+#define L_1		1
+#define L_2		2
+#define L_3		3
+/*
 #define CEC_FUNC_MASK			0
 #define ONE_TOUCH_PLAY_MASK		1
-#define ONE_TOUCH_STANDBY_MASK		2
+#define ONE_TOUCH_STANDBY_MASK	2
 #define AUTO_POWER_ON_MASK		3
+*/
+#define CEC_FUNC_CFG_CEC_ON			0x01
+#define CEC_FUNC_CFG_OTP_ON			0x02
+#define CEC_FUNC_CFG_AUTO_STANDBY	0x04
+#define CEC_FUNC_CFG_AUTO_POWER_ON	0x08
+#define CEC_FUNC_CFG_ALL			0x2f
+#define CEC_FUNC_CFG_NONE			0x0
 
-#define CEC_FUNC_CFG_ALL		0x2f
-#define CEC_FUNC_CFG_NONE		0x0
-
-#define AO_BASE				0xc8100000
+/*#define AO_BASE				0xc8100000*/
 
 #define AO_GPIO_I			((0x0A << 2))
+#define PREG_PAD_GPIO3_I	(0x01b << 2)
+
 
 #define AO_CEC_GEN_CNTL			((0x40 << 2))
 #define AO_CEC_RW_REG			((0x41 << 2))
@@ -348,7 +358,7 @@
 #define EECEC_IRQ_TX_ERR_INITIATOR	(1 << 20)
 #define EECEC_IRQ_RX_ERR_FOLLOWER	(1 << 21)
 #define EECEC_IRQ_RX_WAKEUP		(1 << 22)
-#define EE_CEC_IRQ_EN_MASK		(0x1f << 16)
+#define EE_CEC_IRQ_EN_MASK		(0x3f << 16)
 
 /* cec irq bit flags for AO_CEC_B */
 #define CECB_IRQ_TX_DONE		(1 << 0)
@@ -358,7 +368,7 @@
 #define CECB_IRQ_TX_ERR_INITIATOR	(1 << 4)
 #define CECB_IRQ_RX_ERR_FOLLOWER	(1 << 5)
 #define CECB_IRQ_RX_WAKEUP		(1 << 6)
-#define CECB_IRQ_EN_MASK		(0x1f << 0)
+#define CECB_IRQ_EN_MASK		(0x3f << 0)
 
 /* common mask */
 #define CEC_IRQ_TX_DONE			(1 << (16 - shift))
@@ -369,13 +379,29 @@
 #define CEC_IRQ_RX_ERR_FOLLOWER		(1 << (21 - shift))
 #define CEC_IRQ_RX_WAKEUP		(1 << (22 - shift))
 
+/* wakeup mask */
+#define WAKEUP_OP_86_EN			(1 << 7)
+#define WAKEUP_OP_82_EN			(1 << 6)
+#define WAKEUP_OP_70_EN			(1 << 5)
+#define WAKEUP_OP_44_EN			(1 << 4)
+#define WAKEUP_OP_42_EN			(1 << 3)
+#define WAKEUP_OP_41_EN			(1 << 2)
+#define WAKEUP_OP_0D_EN			(1 << 1)
+#define WAKEUP_OP_04_EN			(1 << 0)
+#define WAKEUP_DIS_MASK			0
+#define WAKEUP_EN_MASK		(WAKEUP_OP_86_EN | \
+							WAKEUP_OP_0D_EN | \
+							WAKEUP_OP_04_EN)
+
 #define EDID_CEC_ID_ADDR		0x00a100a0
 #define EDID_AUTO_CEC_EN		0
 
 #define HHI_32K_CLK_CNTL		(0x89 << 2)
 
+struct dbgflg {
+	unsigned int hal_cmd_bypass:1;
 
-
+};
 
 #ifdef CONFIG_AMLOGIC_MEDIA_TVIN_HDMI
 extern unsigned long hdmirx_rd_top(unsigned long addr);
@@ -416,6 +442,9 @@ void cec_arbit_bit_time_set(unsigned int bit_set,
 				unsigned int time_set, unsigned int flag);
 void cec_irq_enable(bool enable);
 void aocec_irq_enable(bool enable);
+extern void dump_reg(void);
 #endif
+extern void cec_dump_info(void);
+extern void cec_hw_reset(void);
 
 #endif	/* __AO_CEC_H__ */

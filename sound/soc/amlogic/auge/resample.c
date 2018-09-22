@@ -20,6 +20,7 @@
 #include <linux/of_device.h>
 #include <linux/platform_device.h>
 #include <linux/clk.h>
+#include <linux/clk-provider.h>
 #include <sound/soc.h>
 #include <sound/tlv.h>
 
@@ -28,6 +29,8 @@
 #include "ddr_mngr.h"
 
 #define DRV_NAME "audioresample"
+
+#define CLK_RATIO     256
 
 struct resample_chipinfo {
 	bool dividor_fn;
@@ -61,31 +64,39 @@ static int resample_clk_set(struct audioresample *p_resample)
 
 	/* enable clock */
 	if (p_resample->enable) {
-		ret = clk_prepare_enable(p_resample->clk);
-		if (ret) {
-			pr_err("Can't enable resample_clk clock: %d\n", ret);
-			return -EINVAL;
+		if (!__clk_is_enabled(p_resample->clk)) {
+			ret = clk_prepare_enable(p_resample->clk);
+			if (ret) {
+				pr_err("Can't enable resample_clk clock: %d\n",
+					ret);
+				return -EINVAL;
+			}
 		}
-		ret = clk_prepare_enable(p_resample->sclk);
-		if (ret) {
-			pr_err("Can't enable resample_src clock: %d\n", ret);
-			return -EINVAL;
+		if (!__clk_is_enabled(p_resample->sclk)) {
+			ret = clk_prepare_enable(p_resample->sclk);
+			if (ret) {
+				pr_err("Can't enable resample_src clock: %d\n",
+					ret);
+				return -EINVAL;
+			}
 		}
 		if (p_resample->out_rate) {
 			clk_set_rate(p_resample->sclk,
-				p_resample->out_rate * 256);
+				p_resample->out_rate * CLK_RATIO);
 			clk_set_rate(p_resample->clk,
-				p_resample->out_rate * 256);
+				p_resample->out_rate * CLK_RATIO);
 		} else {
 			/* defaule resample clk */
-			clk_set_rate(p_resample->sclk, 48000 * 256);
-			clk_set_rate(p_resample->clk, 48000 * 256);
+			clk_set_rate(p_resample->sclk, 48000 * CLK_RATIO);
+			clk_set_rate(p_resample->clk, 48000 * CLK_RATIO);
 		}
 
-		ret = clk_prepare_enable(p_resample->pll);
-		if (ret) {
-			pr_err("Can't enable pll clock: %d\n", ret);
-			return -EINVAL;
+		if (!__clk_is_enabled(p_resample->pll)) {
+			ret = clk_prepare_enable(p_resample->pll);
+			if (ret) {
+				pr_err("Can't enable pll clock: %d\n", ret);
+				return -EINVAL;
+			}
 		}
 
 		pr_info("%s, resample_pll:%lu, sclk:%lu, clk:%lu\n",
@@ -94,9 +105,12 @@ static int resample_clk_set(struct audioresample *p_resample)
 			clk_get_rate(p_resample->sclk),
 			clk_get_rate(p_resample->clk));
 	} else {
-		clk_disable_unprepare(p_resample->clk);
-		clk_disable_unprepare(p_resample->sclk);
-		clk_disable_unprepare(p_resample->pll);
+		if (__clk_is_enabled(p_resample->clk))
+			clk_disable_unprepare(p_resample->clk);
+		if (__clk_is_enabled(p_resample->sclk))
+			clk_disable_unprepare(p_resample->sclk);
+		if (__clk_is_enabled(p_resample->pll))
+			clk_disable_unprepare(p_resample->pll);
 	}
 
 	return ret;
@@ -150,16 +164,8 @@ static int resample_get_enum(
 	return 0;
 }
 
-static int resample_set_enum(
-	struct snd_kcontrol *kcontrol,
-	struct snd_ctl_elem_value *ucontrol)
+int resample_set(int index)
 {
-/*	struct snd_soc_card *card =  snd_kcontrol_chip(kcontrol);
- *	struct aml_audio_private_data *p_aml_audio =
- *			snd_soc_card_get_drvdata(card);
- *	struct aml_card_info *p_cardinfo = p_aml_audio->cardinfo;
- */
-	int index = ucontrol->value.enumerated.item[0];
 	int resample_rate = 0;
 
 	if (index == 0)
@@ -181,7 +187,14 @@ static int resample_set_enum(
 	else
 		return 0;
 
+	if (auge_resample == index)
+		return 0;
+
 	auge_resample = index;
+
+	pr_info("%s %s\n",
+		__func__,
+		auge_resample_texts[auge_resample]);
 
 	if (audio_resample_set(index, resample_rate))
 		return 0;
@@ -189,16 +202,32 @@ static int resample_set_enum(
 	if (index == 0)
 		resample_disable();
 	else {
-		resample_enable(resample_rate);
-		// TODO: fixe me
+		resample_init(resample_rate);
+
 		resample_set_hw_param(index - 1);
 	}
-/*
- *	if (index > 0
- *		&& p_aml_audio
- *		&& p_cardinfo)
- *		p_cardinfo->set_resample_param(index - 1);
+	/*
+	 *	if (index > 0
+	 *		&& p_aml_audio
+	 *		&& p_cardinfo)
+	 *		p_cardinfo->set_resample_param(index - 1);
+	 */
+
+	return 0;
+}
+
+static int resample_set_enum(
+	struct snd_kcontrol *kcontrol,
+	struct snd_ctl_elem_value *ucontrol)
+{
+/*	struct snd_soc_card *card =  snd_kcontrol_chip(kcontrol);
+ *	struct aml_audio_private_data *p_aml_audio =
+ *			snd_soc_card_get_drvdata(card);
+ *	struct aml_card_info *p_cardinfo = p_aml_audio->cardinfo;
  */
+	int index = ucontrol->value.enumerated.item[0];
+
+	resample_set(index);
 
 	return 0;
 }

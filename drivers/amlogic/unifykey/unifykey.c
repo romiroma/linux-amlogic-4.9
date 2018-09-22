@@ -275,7 +275,9 @@ static int key_storage_query(char *keyname, unsigned int *keystate)
 static int key_efuse_init(struct key_info_t *uk_info,
 	char *buf, unsigned int len)
 {
-	unifykey_get_efuse_version(uk_info);
+	char var = 0;
+
+	var = unifykey_get_efuse_version(uk_info);
 
 	return 0;
 }
@@ -283,7 +285,7 @@ static int key_efuse_init(struct key_info_t *uk_info,
 static int key_efuse_write(char *keyname, unsigned char *keydata,
 		unsigned int datalen)
 {
-#ifdef CONFIG_EFUSE
+#if defined(CONFIG_ARM64) && defined(CONFIG_AMLOGIC_EFUSE)
 	char *title = keyname;
 	struct efusekey_info info;
 
@@ -306,7 +308,7 @@ static int key_efuse_write(char *keyname, unsigned char *keydata,
 static int key_efuse_read(char *keyname, unsigned char *keydata,
 		unsigned int datalen, unsigned int *reallen)
 {
-#ifdef CONFIG_EFUSE
+#if defined(CONFIG_ARM64) && defined(CONFIG_AMLOGIC_EFUSE)
 	char *title = keyname;
 	struct efusekey_info info;
 	int err = 0;
@@ -320,7 +322,7 @@ static int key_efuse_read(char *keyname, unsigned char *keydata,
 		return -ENOMEM;
 	memset(buf, 0, info.size);
 
-	err = efuse_user_attr_show(title, buf);
+	err = efuse_user_attr_read(title, buf);
 	if (err >= 0) {
 		*reallen = info.size;
 		if (datalen > info.size)
@@ -337,7 +339,7 @@ static int key_efuse_read(char *keyname, unsigned char *keydata,
 static int key_efuse_query(char *keyname, unsigned int *keystate)
 {
 	int err =  -EINVAL;
-#ifdef CONFIG_EFUSE
+#if defined(CONFIG_ARM64) && defined(CONFIG_AMLOGIC_EFUSE)
 	int i;
 	char *title = keyname;
 	struct efusekey_info info;
@@ -351,7 +353,7 @@ static int key_efuse_query(char *keyname, unsigned int *keystate)
 		return -ENOMEM;
 	}
 	memset(buf, 0, info.size);
-	err = efuse_user_attr_show(title, buf);
+	err = efuse_user_attr_read(title, buf);
 	*keystate = KEY_NO_EXIST;
 	if (err > 0) {
 		for (i = 0; i < info.size; i++) {
@@ -543,7 +545,7 @@ int key_unify_size(struct aml_unifykey_dev *ukdev,
 
 	if (unifykey->permit & KEY_M_PERMIT_READ) {
 		switch (unifykey->dev) {
-#ifdef CONFIG_EFUSE
+#if defined(CONFIG_ARM64) && defined(CONFIG_AMLOGIC_EFUSE)
 		case KEY_M_EFUSE:
 		{
 			struct efusekey_info info;
@@ -634,6 +636,56 @@ int key_unify_query(struct aml_unifykey_dev *ukdev, char *keyname,
 }
 EXPORT_SYMBOL(key_unify_query);
 
+int key_unify_secure(struct aml_unifykey_dev *ukdev,
+	char *keyname, unsigned int *secure)
+{
+	int ret = 0;
+	struct key_item_t *unifykey;
+	unsigned int keystate, keypermit;
+
+	unifykey = unifykey_find_item_by_name(&(ukdev->uk_header), keyname);
+	if (unifykey == NULL) {
+		pr_err("%s:%d,%s key name is not exist\n",
+			__func__,
+			__LINE__,
+			keyname);
+		return -EINVAL;
+	}
+
+	if (unifykey_item_verify_check(unifykey)) {
+		pr_err("%s:%d,%s key name is invalid\n",
+			__func__,
+			__LINE__,
+			keyname);
+		return -EINVAL;
+	}
+
+	/* check key burned or not */
+	ret = key_unify_query(ukdev, unifykey->name, &keystate, &keypermit);
+	if (ret < 0) {
+		pr_err("%s:%d, key_unify_query failed!\n",
+			__func__, __LINE__);
+		return -EINVAL;
+	}
+
+	*secure = 0;
+	/* if burned, ask bl31, else using dts */
+	if (keystate) {
+		ret = amlkey_issecure(unifykey->name);
+		if (ret < 0)
+			goto _out;
+		*secure = ret;
+	} else {
+		if (unifykey->dev == KEY_M_SECURE)
+			*secure = 1;
+		else
+			*secure = 0;
+	}
+
+_out:
+	return ret;
+}
+EXPORT_SYMBOL(key_unify_secure);
 
 /*
  *function name: key_unify_encrypt
@@ -812,7 +864,6 @@ static long unifykey_unlocked_ioctl(struct file *file,
 			char *keyname;
 			int ret;
 
-
 			key_item_info = kmalloc(sizeof(struct key_item_info_t),
 				GFP_KERNEL);
 			if (!key_item_info)
@@ -825,6 +876,7 @@ static long unifykey_unlocked_ioctl(struct file *file,
 				kfree(key_item_info);
 				return ret;
 			}
+			key_item_info->name[KEY_UNIFY_NAME_LEN - 1] = '\0';
 			index = key_item_info->id;
 			keyname = key_item_info->name;
 			if (strlen(keyname) > KEY_UNIFY_NAME_LEN - 1) {
@@ -860,7 +912,8 @@ static long unifykey_unlocked_ioctl(struct file *file,
 			key_item_info->flag = keystate;
 			key_item_info->id = kkey->id;
 			strncpy(key_item_info->name,
-					kkey->name, KEY_UNIFY_NAME_LEN);
+					kkey->name, (KEY_UNIFY_NAME_LEN - 1));
+			key_item_info->name[KEY_UNIFY_NAME_LEN - 1] = '\0';
 			ret = key_unify_size(ukdev, kkey->name, &reallen);
 			if (ret < 0) {
 				pr_err("%s() %d, get size fail\n",
@@ -1070,6 +1123,42 @@ static ssize_t exist_show(struct class *cla,
 		keystate = 2;
 
 	n += sprintf(&buf[n], "%s\n", state[keystate]);
+	buf[n] = 0;
+	return n;
+}
+
+static ssize_t secure_show(struct class *cla,
+	struct class_attribute *attr,
+	char *buf)
+{
+	struct aml_unifykey_dev *ukdev;
+	struct key_item_t      *curkey;
+	ssize_t n = 0;
+	int ret;
+	unsigned int secure = 0;
+	static const char * const state[] = {"false", "true", "error"};
+
+	ukdev = container_of(cla, struct aml_unifykey_dev, cls);
+	curkey = ukdev->curkey;
+	if (curkey == NULL) {
+		pr_err("please set key name first, %s:%d\n",
+			__func__, __LINE__);
+		return -EINVAL;
+	}
+
+	/* using current key*/
+	ret = key_unify_secure(ukdev, curkey->name, &secure);
+	if (ret < 0) {
+		pr_err("%s:%d, key_unify_secure failed!\n",
+			__func__, __LINE__);
+		secure = 2;
+		goto _out;
+	}
+
+	if (secure > 1)
+		secure = 1;
+_out:
+	n += sprintf(&buf[n], "%s\n", state[secure]);
 	buf[n] = 0;
 	return n;
 }
@@ -1506,6 +1595,7 @@ static struct class_attribute unifykey_class_attrs[] = {
 	__ATTR_RO(list),
 	__ATTR_RO(exist),
 	__ATTR_RO(encrypt),
+	__ATTR_RO(secure),
 	__ATTR_RO(size),
 	__ATTR_RO(help),
 	__ATTR(name, KEY_RW_ATTR, name_show, name_store),

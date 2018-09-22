@@ -75,7 +75,7 @@ static struct class *tvafe_clsp;
 struct mutex pll_mutex;
 
 #define TVAFE_TIMER_INTERVAL    (HZ/100)   /* 10ms, #define HZ 100 */
-#define TVAFE_RATIO_CNT			50
+#define TVAFE_RATIO_CNT			40
 
 static struct am_regs_s tvaferegs;
 static struct tvafe_pin_mux_s tvafe_pinmux;
@@ -286,7 +286,9 @@ int tvafe_dec_open(struct tvin_frontend_s *fe, enum tvin_port_e port)
 			W_APB_BIT(TVFE_CLAMP_INTF, 1,
 					CLAMP_EN_BIT, CLAMP_EN_WID);
 		}
-	}
+	} else
+		W_APB_BIT(TVFE_CLAMP_INTF, 1,
+					CLAMP_EN_BIT, CLAMP_EN_WID);
 #else
 	W_APB_BIT(TVFE_CLAMP_INTF, 1,
 					CLAMP_EN_BIT, CLAMP_EN_WID);
@@ -520,6 +522,8 @@ int tvafe_dec_isr(struct tvin_frontend_s *fe, unsigned int hcnt64)
 	struct tvafe_info_s *tvafe = &devp->tvafe;
 	enum tvin_port_e port = tvafe->parm.port;
 	enum tvin_aspect_ratio_e aspect_ratio = TVIN_ASPECT_NULL;
+	static int count[10] = {0};
+	int i;
 
 	if (!(devp->flags & TVAFE_FLAG_DEV_OPENED) ||
 		(devp->flags & TVAFE_POWERDOWN_IN_IDLE)) {
@@ -559,16 +563,50 @@ int tvafe_dec_isr(struct tvin_frontend_s *fe, unsigned int hcnt64)
 
 	if ((port >= TVIN_PORT_CVBS0) && (port <= TVIN_PORT_CVBS3)) {
 		aspect_ratio = tvafe_cvd2_get_wss();
-		if (aspect_ratio != tvafe->aspect_ratio_last) {
-			tvafe->aspect_ratio_last = aspect_ratio;
+		switch (aspect_ratio) {
+		case TVIN_ASPECT_NULL:
+			count[TVIN_ASPECT_NULL]++;
+			break;
+		case TVIN_ASPECT_1x1:
+			count[TVIN_ASPECT_1x1]++;
+			break;
+		case TVIN_ASPECT_4x3_FULL:
+			count[TVIN_ASPECT_4x3_FULL]++;
+			break;
+		case TVIN_ASPECT_14x9_FULL:
+			count[TVIN_ASPECT_14x9_FULL]++;
+			break;
+		case TVIN_ASPECT_14x9_LB_CENTER:
+			count[TVIN_ASPECT_14x9_LB_CENTER]++;
+			break;
+		case TVIN_ASPECT_14x9_LB_TOP:
+			count[TVIN_ASPECT_14x9_LB_TOP]++;
+			break;
+		case TVIN_ASPECT_16x9_FULL:
+			count[TVIN_ASPECT_16x9_FULL]++;
+			break;
+		case TVIN_ASPECT_16x9_LB_CENTER:
+			count[TVIN_ASPECT_16x9_LB_CENTER]++;
+			break;
+		case TVIN_ASPECT_16x9_LB_TOP:
+			count[TVIN_ASPECT_16x9_LB_TOP]++;
+			break;
+		case TVIN_ASPECT_MAX:
+			break;
+		}
+		/*over 30/40 times,ratio is effective*/
+		if (++(tvafe->aspect_ratio_cnt) > TVAFE_RATIO_CNT) {
+			for (i = 0; i < TVIN_ASPECT_MAX; i++) {
+				if (count[i] > 30) {
+					tvafe->aspect_ratio = i;
+					break;
+				}
+			}
+			for (i = 0; i < TVIN_ASPECT_MAX; i++)
+				count[i] = 0;
 			tvafe->aspect_ratio_cnt = 0;
-		} else if (++(tvafe->aspect_ratio_cnt) > TVAFE_RATIO_CNT) {
-			tvafe->aspect_ratio = aspect_ratio;
-			/* avoid overflow */
-			tvafe->aspect_ratio_cnt = TVAFE_RATIO_CNT;
 		}
 	}
-
 	return TVIN_BUF_NULL;
 }
 
@@ -605,22 +643,9 @@ bool tvafe_is_nosig(struct tvin_frontend_s *fe)
 	if ((port >= TVIN_PORT_CVBS0) && (port <= TVIN_PORT_CVBS3)) {
 		ret = tvafe_cvd2_no_sig(&tvafe->cvd2, &devp->mem);
 
-		/*fix black side when config atv snow*/
-		if (ret && (port == TVIN_PORT_CVBS3) &&
-			(devp->flags & TVAFE_FLAG_DEV_SNOW_FLAG) &&
-			(tvafe->cvd2.config_fmt == TVIN_SIG_FMT_CVBS_PAL_I) &&
-			(tvafe->cvd2.info.state != TVAFE_CVD2_STATE_FIND))
-			tvafe_snow_config_acd();
-		else if ((tvafe->cvd2.config_fmt == TVIN_SIG_FMT_CVBS_PAL_I) &&
-			(tvafe->cvd2.info.state == TVAFE_CVD2_STATE_FIND) &&
-			(port == TVIN_PORT_CVBS3))
-			tvafe_snow_config_acd_resume();
-
 		/* normal sigal & adc reg error, reload source mux */
 		if (tvafe->cvd2.info.adc_reload_en && !ret)
-
 			tvafe_set_source_muxing(port, devp->pinmux);
-
 	}
 
 	return ret;

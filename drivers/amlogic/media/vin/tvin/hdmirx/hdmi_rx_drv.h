@@ -34,27 +34,37 @@
 #include "hdmi_rx_edid.h"
 
 
-#define RX_VER0 "ver.2018/06/21"
+#define RX_VER0 "ver.2018-08-22"
 /*
  *
  *
  *
  *
  */
-#define RX_VER1 "ver.2018/06/07"
+#define RX_VER1 "ver.2018/08/22"
 /*
  *
  *
  */
-#define RX_VER2 "ver.2018/06/27"
+#define RX_VER2 "ver.2018/09/04"
 
+/*print type*/
+#define	LOG_EN		0x01
+#define VIDEO_LOG	0x02
+#define AUDIO_LOG	0x04
+#define HDCP_LOG	0x08
+#define PACKET_LOG	0x10
+#define EQ_LOG		0x20
+#define REG_LOG		0x40
+#define ERR_LOG		0x80
+#define VSI_LOG		0x800
 
 /* 50ms timer for hdmirx main loop (HDMI_STATE_CHECK_FREQ is 20) */
 
 
 #define ABS(x) ((x) < 0 ? -(x) : (x))
 
-
+#define EDID_MIX_MAX_SIZE 64
 
 #define ESM_KILL_WAIT_TIMES 250
 #define str_cmp(buff, str) ((strlen((str)) == strlen((buff))) &&	\
@@ -74,7 +84,7 @@ enum chip_id_e {
 	CHIP_ID_GXTVBB,
 	CHIP_ID_TXL,
 	CHIP_ID_TXLX,
-	CHIP_ID_TXHD = CHIP_ID_TXLX,
+	CHIP_ID_TXHD,
 };
 
 struct meson_hdmirx_data {
@@ -119,11 +129,14 @@ struct hdmirx_dev_s {
 		uint32_t)
 #define HDMI_IOC_GET_PD_FIFO_PARAM _IOWR(HDMI_IOC_MAGIC, 0x0c,\
 	struct pd_infoframe_s)
+#define HDMI_IOC_HDCP14_KEY_MODE _IOR(HDMI_IOC_MAGIC, 0x0d,\
+	enum hdcp14_key_mode_e)
 
 #define IOC_SPD_INFO  _BIT(0)
 #define IOC_AUD_INFO  _BIT(1)
 #define IOC_MPEGS_INFO _BIT(2)
 #define IOC_AVI_INFO _BIT(3)
+#define ALL_PORTS ((1 << E_PORT_NUM) - 1)
 
 enum colorspace_e {
 	E_COLOR_RGB,
@@ -366,6 +379,7 @@ struct rx_s {
 	struct aud_info_s aud_info;
 	struct vsi_info_s vs_info_details;
 	struct tvin_hdr_info_s hdr_info;
+	unsigned char edid_mix_buf[EDID_MIX_MAX_SIZE];
 	unsigned int pwr_sts;
 	/* for debug */
 	/*struct pd_infoframe_s dbg_info;*/
@@ -404,15 +418,13 @@ extern void skip_frame(unsigned int cnt);
 /* hotplug */
 extern unsigned int pwr_sts;
 extern int pre_port;
-extern void rx_set_hpd(bool en);
-extern unsigned int rx_get_hdmi5v_sts(void);
-extern unsigned int rx_get_hpd_sts(void);
 extern void hotplug_wait_query(void);
 extern void rx_send_hpd_pulse(void);
 
 /* irq */
 extern void rx_irq_en(bool enable);
 extern irqreturn_t irq_handler(int irq, void *params);
+extern void cecrx_irq_handle(void);
 
 /* user interface */
 extern int pc_mode_en;
@@ -430,6 +442,8 @@ extern bool hdcp_enable;
 extern int log_level;
 extern int sm_pause;
 extern int suspend_pddq_sel;
+extern int disable_port_num;
+extern int disable_port_en;
 extern int rx_set_global_variable(const char *buf, int size);
 extern void rx_get_global_variable(const char *buf);
 extern int rx_pr(const char *fmt, ...);

@@ -28,7 +28,10 @@
 /* 20180226: g12a support */
 /* 20180425: tvconfig suuport */
 /* 20180620: fix coverity errors */
-#define LCD_DRV_VERSION    "20180620"
+/* 20180626: txl suuport */
+/* 20180718: mute: wait vsync for display shadow */
+/* 20180827: add pinmux off support */
+#define LCD_DRV_VERSION    "20180827"
 
 #define VPP_OUT_SATURATE            (1 << 0)
 
@@ -89,13 +92,14 @@ extern int lcd_power_load_from_dts(struct lcd_config_s *pconf,
 extern int lcd_power_load_from_unifykey(struct lcd_config_s *pconf,
 		unsigned char *buf, int key_len, int len);
 
-extern void lcd_hdr_vinfo_update(void);
+extern void lcd_optical_vinfo_update(void);
 extern void lcd_timing_init_config(struct lcd_config_s *pconf);
 extern int lcd_vmode_change(struct lcd_config_s *pconf);
 extern void lcd_venc_change(struct lcd_config_s *pconf);
 extern void lcd_if_enable_retry(struct lcd_config_s *pconf);
 
 /* lcd debug */
+extern void lcd_debug_test(unsigned int num);
 extern void lcd_mute_setting(unsigned char flag);
 extern int lcd_class_creat(void);
 extern int lcd_class_remove(void);
@@ -111,6 +115,7 @@ extern int lcd_tv_probe(struct device *dev);
 extern int lcd_tv_remove(struct device *dev);
 #endif
 #ifdef CONFIG_AMLOGIC_LCD_TABLET
+int lcd_mipi_test_read(struct dsi_read_s *dread);
 extern void lcd_tablet_vout_server_init(void);
 extern void lcd_tablet_vout_server_remove(void);
 extern void lcd_tablet_clk_config_change(struct lcd_config_s *pconf);

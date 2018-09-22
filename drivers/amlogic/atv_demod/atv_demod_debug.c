@@ -41,7 +41,7 @@
 	DEBUGFS_CREATE_NODE(reg_23cf, 0640, dentry, u32)\
 	DEBUGFS_CREATE_NODE(btsc_sap_mode, 0640, dentry, u32)\
 	DEBUGFS_CREATE_NODE(afc_limit, 0640, dentry, u32)\
-	DEBUGFS_CREATE_NODE(aml_timer_en, 0640, dentry, bool)\
+	DEBUGFS_CREATE_NODE(afc_timer_en, 0640, dentry, bool)\
 	DEBUGFS_CREATE_NODE(timer_delay, 0640, dentry, u32)\
 	DEBUGFS_CREATE_NODE(timer_delay2, 0640, dentry, u32)\
 	DEBUGFS_CREATE_NODE(timer_delay3, 0640, dentry, u32)\
@@ -57,7 +57,7 @@
 	DEBUGFS_CREATE_NODE(input_amplitude, 0640, dentry, u64)\
 	DEBUGFS_CREATE_NODE(audio_det_en, 0640, dentry, bool)\
 	DEBUGFS_CREATE_NODE(non_std_en, 0640, dentry, u32)\
-	DEBUGFS_CREATE_NODE(non_std_onoff, 0640, dentry, bool)\
+	DEBUGFS_CREATE_NODE(atvdemod_non_std_en, 0640, dentry, bool)\
 	DEBUGFS_CREATE_NODE(non_std_times, 0640, dentry, u32)\
 	DEBUGFS_CREATE_NODE(atv_video_gain, 0640, dentry, u32)\
 	DEBUGFS_CREATE_NODE(carrier_amplif_val, 0640, dentry, u32)\
@@ -69,6 +69,7 @@
 	DEBUGFS_CREATE_NODE(ademod_debug_en, 0640, dentry, u32)\
 	DEBUGFS_CREATE_NODE(btsc_detect_delay, 0640, dentry, u32)\
 	DEBUGFS_CREATE_NODE(nicam_detect_delay, 0640, dentry, u32)\
+	DEBUGFS_CREATE_NODE(a2_detect_delay, 0640, dentry, u32)\
 	DEBUGFS_CREATE_NODE(signal_audmode, 0640, dentry, u32)\
 	DEBUGFS_CREATE_NODE(audio_thd_threshold1, 0640, dentry, u32)\
 	DEBUGFS_CREATE_NODE(gde_curve, 0640, dentry, u32)\
@@ -78,10 +79,10 @@
 	DEBUGFS_CREATE_NODE(atvdemod_agc_pinmux, 0640, dentry, u32)\
 	DEBUGFS_CREATE_NODE(atvdemod_afc_range, 0640, dentry, u32)\
 	DEBUGFS_CREATE_NODE(atvdemod_afc_offset, 0640, dentry, u32)\
-	DEBUGFS_CREATE_NODE(atvdemod_timer_en, 0640, dentry, u32)\
-	DEBUGFS_CREATE_NODE(atvdemod_afc_en, 0640, dentry, u32)\
-	DEBUGFS_CREATE_NODE(atvdemod_monitor_en, 0640, dentry, u32)\
-	DEBUGFS_CREATE_NODE(audio_thd_en, 0640, dentry, u32)\
+	DEBUGFS_CREATE_NODE(atvdemod_timer_en, 0640, dentry, bool)\
+	DEBUGFS_CREATE_NODE(atvdemod_tune_en, 0640, dentry, bool)\
+	DEBUGFS_CREATE_NODE(atvdemod_monitor_en, 0640, dentry, bool)\
+	DEBUGFS_CREATE_NODE(audio_thd_en, 0640, dentry, bool)\
 	DEBUGFS_CREATE_NODE(pwm_kp, 0640, dentry, u32)\
 	DEBUGFS_CREATE_NODE(reg_dbg_en, 0640, dentry, u32)\
 	DEBUGFS_CREATE_NODE(audio_gain_val, 0640, dentry, u32)\

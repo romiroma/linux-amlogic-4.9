@@ -61,8 +61,8 @@ static bool clk_debug;
 
 static int hpd_wait_cnt;
 /* increase time of hpd low, to avoid some source like */
-/* MTK box i2c communicate error */
-static int hpd_wait_max = 20;
+/* MTK box/KaiboerH9 i2c communicate error */
+static int hpd_wait_max = 40;
 
 static int sig_unstable_cnt;
 static int sig_unstable_max = 80;
@@ -194,9 +194,6 @@ static bool hdcp22_stop_auth_enable;
 static bool hdcp22_esm_reset2_enable;
 int sm_pause;
 int pre_port = 0xff;
-/*uint32_t irq_flag;*/
-/*for some device pll unlock too long,send a hpd reset*/
-bool hdmi5v_lost_flag;
 static int hdcp_none_wait_max = 100;
 /* for no signal after esd test issue, phy
  * does't work, cable clock or PLL can't
@@ -246,6 +243,10 @@ void rx_tasklet_handler(unsigned long arg)
 	if (irq_flag & IRQ_PACKET_FLAG)
 		rx_pkt_handler(PKT_BUFF_SET_FIFO);
 
+	/*pkt overflow or underflow*/
+	if (irq_flag & IRQ_PACKET_ERR)
+		hdmirx_packet_fifo_rst();
+
 	if (irq_flag & IRQ_AUD_FLAG)
 		hdmirx_audio_fifo_rst();
 
@@ -259,6 +260,7 @@ static int hdmi_rx_ctrl_irq_handler(void)
 	uint32_t intr_hdmi = 0;
 	uint32_t intr_md = 0;
 	uint32_t intr_pedc = 0;
+	uint32_t intr_aud_cec = 0;
 	/* uint32_t intr_aud_clk = 0; */
 	uint32_t intr_aud_fifo = 0;
 	uint32_t intr_hdcp22 = 0;
@@ -296,6 +298,16 @@ static int hdmi_rx_ctrl_irq_handler(void)
 		intr_hdcp22 =
 			hdmirx_rd_dwc(DWC_HDMI2_ISTS) &
 		    hdmirx_rd_dwc(DWC_HDMI2_IEN);
+	}
+
+	if (is_meson_txl_cpu()) {
+		intr_aud_cec =
+				hdmirx_rd_dwc(DWC_AUD_CEC_ISTS) &
+				hdmirx_rd_dwc(DWC_AUD_CEC_IEN);
+		if (intr_aud_cec != 0) {
+			cecrx_irq_handle();
+			hdmirx_wr_dwc(DWC_AUD_CEC_ICLR, intr_aud_cec);
+		}
 	}
 
 	if (intr_hdcp22 != 0) {
@@ -384,7 +396,7 @@ static int hdmi_rx_ctrl_irq_handler(void)
 			if (log_level & 0x200)
 				rx_pr("[irq] FIFO MIN\n");
 		}
-		if (!is_meson_txlx_cpu()) {
+		if (rx.chip_id != CHIP_ID_TXLX) {
 			if (rx_get_bits(intr_pedc,
 				DRM_RCV_EN) != 0) {
 				if (log_level & 0x400)
@@ -404,12 +416,14 @@ static int hdmi_rx_ctrl_irq_handler(void)
 		if (rx_get_bits(intr_pedc, PD_FIFO_OVERFL) != 0) {
 			if (log_level & 0x200)
 				rx_pr("[irq] PD_FIFO_OVERFL\n");
-			rx.irq_flag |= IRQ_PACKET_FLAG;
+			rx.irq_flag |= IRQ_PACKET_ERR;
+			/*hdmirx_packet_fifo_rst();*/
 		}
 		if (rx_get_bits(intr_pedc, PD_FIFO_UNDERFL) != 0) {
 			if (log_level & 0x200)
 				rx_pr("[irq] PD_FIFO_UNDFLOW\n");
-			rx.irq_flag |= IRQ_PACKET_FLAG;
+			rx.irq_flag |= IRQ_PACKET_ERR;
+			/*hdmirx_packet_fifo_rst();*/
 		}
 	}
 
@@ -1160,13 +1174,13 @@ void rx_dwc_reset(void)
 	hdmirx_packet_fifo_rst();
 }
 
-
-uint32_t rx_get_cur_hpd_sts(void)
+int rx_get_cur_hpd_sts(void)
 {
-	uint32_t ret = rx_get_hpd_sts() & (1 << rx.port);
+	int tmp;
 
-	ret = (ret == 0) ? 1 : 0;
-	return ret;
+	tmp = hdmirx_rd_top(TOP_HPD_PWR5V) & (1 << rx.port);
+	tmp >>= rx.port;
+	return tmp;
 }
 
 bool is_tmds_valid(void)
@@ -1250,8 +1264,8 @@ bool is_unnormal_format(uint8_t wait_cnt)
 		if (sig_stable_max == wait_cnt)
 			rx_pr("hdcp14 unfinished\n");
 		if (unnormal_wait_max == wait_cnt) {
-			if ((rx.hdcp.bksv[0] == 0) &&
-				(rx.hdcp.bksv[1] == 0))
+			if ((hdmirx_rd_dwc(DWC_HDCP_BKSV1) == 0) &&
+				(hdmirx_rd_dwc(DWC_HDCP_BKSV0) == 0))
 				rx.err_code = ERR_NO_HDCP14_KEY;
 			ret = false;
 		}
@@ -1301,6 +1315,8 @@ void fsm_restart(void)
 			rx_esm_tmdsclk_en(false);
 		esm_set_stable(false);
 	}
+	hdmirx_hw_config();
+	hdmi_rx_top_edid_update();
 	set_scdc_cfg(1, 0);
 	vic_check_en = true;
 	dvi_check_en = true;
@@ -1362,7 +1378,7 @@ void dump_unnormal_info(void)
 
 void rx_send_hpd_pulse(void)
 {
-	rx_set_hpd(0);
+	rx_set_cur_hpd(0);
 	fsm_restart();
 }
 
@@ -1768,6 +1784,16 @@ void skip_frame(unsigned int cnt)
 	rx_pr("rx.skip = %d", rx.skip);
 }
 
+void wait_ddc_idle(void)
+{
+	unsigned char i;
+	/* add delays to avoid the edid communication fail */
+	for (i = 0; i <= 10; i++) {
+		if (!is_ddc_idle(rx.port))
+			msleep(20);
+	}
+}
+
 /***********************
  * hdmirx_open_port
  ***********************/
@@ -1784,7 +1810,9 @@ void hdmirx_open_port(enum tvin_port_e port)
 		rx.hdcp.repeat = 0;
 
 	if ((pre_port != rx.port) ||
-		(rx_get_cur_hpd_sts()) == 0) {
+		(rx_get_cur_hpd_sts() == 0) ||
+		/* when open specific port, force to enable it */
+		(disable_port_en && (rx.port == disable_port_num))) {
 		if (hdcp22_on) {
 			esm_set_stable(false);
 			esm_set_reset(true);
@@ -1797,9 +1825,11 @@ void hdmirx_open_port(enum tvin_port_e port)
 		}
 		if (rx.state > FSM_HPD_LOW)
 			rx.state = FSM_HPD_LOW;
-		rx_set_hpd(0);
+		rx_set_cur_hpd(0);
 		/* need reset the whole module when switch port */
 		hdmirx_hw_config();
+		wait_ddc_idle();
+		hdmi_rx_top_edid_update();
 	} else {
 		if (rx.state >= FSM_SIG_STABLE)
 			rx.state = FSM_SIG_STABLE;
@@ -1817,6 +1847,9 @@ void hdmirx_close_port(void)
 	/* if (sm_pause) */
 	/*	return; */
 	/* External_Mute(1); */
+	/* when exit hdmi, disable termination & hpd of specific port */
+	if (disable_port_en)
+		rx_set_port_hpd(disable_port_num, 0);
 }
 
 void rx_nosig_monitor(void)
@@ -1956,9 +1989,10 @@ void rx_main_state_machine(void)
 	case FSM_5V_LOST:
 		if (rx.cur_5v_sts)
 			rx.state = FSM_INIT;
+		fsm_restart();
 		break;
 	case FSM_HPD_LOW:
-		rx_set_hpd(0);
+		rx_set_cur_hpd(0);
 		set_scdc_cfg(1, 0);
 		rx.state = FSM_INIT;
 		break;
@@ -1969,19 +2003,14 @@ void rx_main_state_machine(void)
 	case FSM_HPD_HIGH:
 		hpd_wait_cnt++;
 		if (rx_get_cur_hpd_sts() == 0) {
-			if (edid_update_flag) {
-				if (hpd_wait_cnt <= hpd_wait_max*10)
-					break;
-			} else {
-				if (hpd_wait_cnt <= hpd_wait_max)
-					break;
-			}
+			if (hpd_wait_cnt <= hpd_wait_max)
+				break;
 		}
 		hpd_wait_cnt = 0;
 		clk_unstable_cnt = 0;
 		esd_phy_rst_cnt = 0;
 		pre_port = rx.port;
-		rx_set_hpd(1);
+		rx_set_cur_hpd(1);
 		set_scdc_cfg(0, 1);
 		/* rx.hdcp.hdcp_version = HDCP_VER_NONE; */
 		rx.state = FSM_WAIT_CLK_STABLE;
@@ -2051,7 +2080,7 @@ void rx_main_state_machine(void)
 				else
 					rx.err_rec_mode = ERR_REC_HPD_RST;
 			} else if (rx.err_rec_mode == ERR_REC_HPD_RST) {
-				rx_set_hpd(0);
+				rx_set_cur_hpd(0);
 				rx.state = FSM_HPD_HIGH;
 				rx.err_rec_mode = ERR_REC_END;
 			} else {
@@ -2089,6 +2118,7 @@ void rx_main_state_machine(void)
 				if (fmt_vic_abnormal() &&
 					(vic_check_en == true)) {
 					hdmirx_hw_config();
+					hdmi_rx_top_edid_update();
 					rx.state = FSM_HPD_LOW;
 					vic_check_en = false;
 					break;
@@ -2133,7 +2163,7 @@ void rx_main_state_machine(void)
 				rx.err_rec_mode = ERR_REC_HPD_RST;
 				rx_set_eq_run_state(E_EQ_START);
 			} else if (rx.err_rec_mode == ERR_REC_HPD_RST) {
-				rx_set_hpd(0);
+				rx_set_cur_hpd(0);
 				rx.state = FSM_HPD_HIGH;
 				rx.err_rec_mode = ERR_REC_END;
 			} else
@@ -2260,7 +2290,7 @@ void rx_main_state_machine(void)
 	switch (rx.state) {
 	case FSM_HPD_LOW:
 		/* set_scdc_cfg(1, 1); */
-		rx_set_hpd(0);
+		rx_set_cur_hpd(0);
 		rx_irq_en(false);
 		rx.state = FSM_INIT;
 		set_scdc_cfg(1, 0);
@@ -2289,7 +2319,7 @@ void rx_main_state_machine(void)
 		}
 		hpd_wait_cnt = 0;
 		pre_port = rx.port;
-		rx_set_hpd(1);
+		rx_set_cur_hpd(1);
 		set_scdc_cfg(0, 1);
 		/* some box init hdcp authentication too early
 		 * and it may make the hdcp_version error
@@ -2406,6 +2436,7 @@ void rx_main_state_machine(void)
 				if (fmt_vic_abnormal() &&
 					(vic_check_en == true)) {
 					hdmirx_hw_config();
+					hdmi_rx_top_edid_update();
 					rx.state = FSM_HPD_LOW;
 					vic_check_en = false;
 					break;
@@ -2450,7 +2481,7 @@ void rx_main_state_machine(void)
 					if (sig_unstable_reset_hpd_cnt >=
 						sig_unstable_reset_hpd_max) {
 						rx.state = FSM_HPD_HIGH;
-						rx_set_hpd(0);
+						rx_set_cur_hpd(0);
 						sig_unstable_reset_hpd_cnt = 0;
 						rx_pr(
 						"unstable->HDMI5V_HIGH\n");
@@ -2634,20 +2665,22 @@ unsigned int hdmirx_show_info(unsigned char *buf, int size)
 		"TMDS clock: %d\n", hdmirx_get_tmds_clock());
 	pos += snprintf(buf+pos, size-pos,
 		"Pixel clock: %d\n", hdmirx_get_pixel_clock());
-	/*
-	 *if (drmpkt->des_u.tp1.eotf == EOTF_SDR)
-	 *	pos += snprintf(buf+pos, size-pos,
-	 *		"HDR EOTF: %s\n", "SDR");
-	 * else if (drmpkt->des_u.tp1.eotf == EOTF_HDR)
-	 *	pos += snprintf(buf+pos, size-pos,
-	 *	"HDR EOTF: %s\n", "HDR");
-	 * else if (drmpkt->des_u.tp1.eotf == EOTF_SMPTE_ST_2048)
-	 *	pos += snprintf(buf+pos, size-pos,
-	 *	"HDR EOTF: %s\n", "SMPTE_ST_2048");
-	 * pos += snprintf(buf+pos, size-pos,
-	 *	"Dolby Vision: %s\n",
-	 *	(rx.vs_info_details.dolby_vision?"on":"off"));
-	 */
+	if (drmpkt->des_u.tp1.eotf == EOTF_SDR)
+		pos += snprintf(buf+pos, size-pos,
+		"HDR EOTF: %s\n", "SDR");
+	else if (drmpkt->des_u.tp1.eotf == EOTF_HDR)
+		pos += snprintf(buf+pos, size-pos,
+		"HDR EOTF: %s\n", "HDR");
+	else if (drmpkt->des_u.tp1.eotf == EOTF_SMPTE_ST_2048)
+		pos += snprintf(buf+pos, size-pos,
+		"HDR EOTF: %s\n", "SMPTE_ST_2048");
+	else if (drmpkt->des_u.tp1.eotf == EOTF_HLG)
+		pos += snprintf(buf+pos, size-pos,
+		"HDR EOTF: %s\n", "HLG");
+	pos += snprintf(buf+pos, size-pos,
+		"Dolby Vision: %s\n",
+		(rx.vs_info_details.dolby_vision?"on":"off"));
+
 	pos += snprintf(buf+pos, size-pos,
 		"\n\nAudio info\n\n");
 	pos += snprintf(buf+pos, size-pos,
@@ -2704,9 +2737,9 @@ static void dump_hdcp_data(void)
 	rx_pr("\n hdcp-seed = %d ",
 		rx.hdcp.seed);
 	/* KSV CONFIDENTIAL */
-	rx_pr("\n hdcp-ksv = %x---%x",
-		rx.hdcp.bksv[0],
-		rx.hdcp.bksv[1]);
+	rx_pr("hdcp-bksv = %x---%x",
+		hdmirx_rd_dwc(DWC_HDCP_BKSV1),
+		hdmirx_rd_dwc(DWC_HDCP_BKSV0));
 	rx_pr("\n*************HDCP end**********\n");
 }
 
@@ -2851,7 +2884,7 @@ int hdmirx_debug(const char *buf, int size)
 		rx_pr("duk--dump duk\n");
 		rx_pr("*****************\n");
 	} else if (strncmp(tmpbuf, "hpd", 3) == 0)
-		rx_set_hpd(tmpbuf[3] == '0' ? 0 : 1);
+		rx_set_cur_hpd(tmpbuf[3] == '0' ? 0 : 1);
 	else if (strncmp(tmpbuf, "cable_status", 12) == 0) {
 		size = hdmirx_rd_top(TOP_HPD_PWR5V) >> 20;
 		rx_pr("cable_status = %x\n", size);
@@ -2862,6 +2895,7 @@ int hdmirx_debug(const char *buf, int size)
 		if (tmpbuf[5] == '0') {
 			rx_pr(" hdmirx hw config\n");
 			hdmirx_hw_config();
+			hdmi_rx_top_edid_update();
 		} else if (tmpbuf[5] == '1') {
 			rx_pr(" hdmirx phy init 8bit\n");
 			hdmirx_phy_init();
@@ -2919,6 +2953,18 @@ int hdmirx_debug(const char *buf, int size)
 		rx_pr("Hdmirx version1: %s\n", RX_VER1);
 		rx_pr("Hdmirx version2: %s\n", RX_VER2);
 		rx_pr("------------------\n");
+	}  else if (strncmp(input[0], "port0", 5) == 0) {
+		hdmirx_open_port(TVIN_PORT_HDMI0);
+		rx.open_fg = 1;
+	} else if (strncmp(input[0], "port1", 5) == 0) {
+		hdmirx_open_port(TVIN_PORT_HDMI1);
+		rx.open_fg = 1;
+	} else if (strncmp(input[0], "port2", 5) == 0) {
+		hdmirx_open_port(TVIN_PORT_HDMI2);
+		rx.open_fg = 1;
+	} else if (strncmp(input[0], "port3", 5) == 0) {
+		hdmirx_open_port(TVIN_PORT_HDMI3);
+		rx.open_fg = 1;
 	}
 	return 0;
 }

@@ -40,6 +40,9 @@ struct aml_atvdemod_device {
 	struct device *dev;
 
 	unsigned int tuner_id;
+	unsigned int tuner_xtal;
+	unsigned int tuner_xtal_mode;
+	unsigned int tuner_xtal_cap;
 	unsigned int i2c_addr;
 	unsigned int i2c_adapter_id;
 	struct i2c_adapter *i2c_adp;
@@ -48,9 +51,10 @@ struct aml_atvdemod_device {
 	unsigned int if_inv;
 	u64 std;
 	unsigned int audmode;
-
+	unsigned int soundsys;
 	int fre_offset;
-	struct pinctrl *pin;
+
+	struct pinctrl *agc_pin;
 	const char *pin_name;
 
 	struct v4l2_frontend v4l2_fe;

@@ -53,6 +53,15 @@
 		#size-cells = <2>;
 		ranges;
 		/* global autoconfigured region for contiguous allocations */
+		ramoops@0x07400000 {
+			compatible = "ramoops";
+			reg = <0x0 0x07400000 0x0 0x00100000>;
+			record-size = <0x8000>;
+			console-size = <0x8000>;
+			ftrace-size = <0x0>;
+			pmsg-size = <0x8000>;
+		};
+
 		secmon_reserved:linux,secmon {
 			compatible = "shared-dma-pool";
 			reusable;
@@ -148,7 +157,7 @@
 			compatible = "shared-dma-pool";
 			reusable;
 			status = "okay";
-			size = <0x0 0x10000000>;
+			size = <0x0 0x1f000000>;
 			alignment = <0x0 0x400000>;
 		};
 
@@ -157,6 +166,13 @@
 			reusable;
 			status = "okay";
 			size = <0x0 0x03000000>;
+			alignment = <0x0 0x400000>;
+		};
+		gdc_cma_reserved:linux,gdc_cma {
+			compatible = "shared-dma-pool";
+			reusable;
+			status = "okay";
+			size = <0x0 0x04000000>;
 			alignment = <0x0 0x400000>;
 		};
 	};
@@ -272,7 +288,8 @@
 		key_num = <1>;
 		key_name = "power";
 		key_code = <116>;
-		key_pin = <&gpio_ao  GPIOAO_3  GPIO_ACTIVE_HIGH>;
+		key-gpios = <&gpio_ao  GPIOAO_3  GPIO_ACTIVE_HIGH>;
+		detect_mode = <0>;/*0:polling mode, 1:irq mode*/
 	};
 
 	adc_keypad {
@@ -388,6 +405,35 @@
 			key-permit = "read","write","del";
 		};
 	};//End unifykey
+
+	efusekey:efusekey{
+		keynum = <4>;
+		key0 = <&key_0>;
+		key1 = <&key_1>;
+		key2 = <&key_2>;
+		key3 = <&key_3>;
+		key_0:key_0{
+			keyname = "mac";
+			offset = <0>;
+			size = <6>;
+		};
+		key_1:key_1{
+			keyname = "mac_bt";
+			offset = <6>;
+			size = <6>;
+		};
+		key_2:key_2{
+			keyname = "mac_wifi";
+			offset = <12>;
+			size = <6>;
+		};
+		key_3:key_3{
+			keyname = "usid";
+			offset = <18>;
+			size = <16>;
+		};
+	};//End efusekey
+
 
 	amlvecm {
 		compatible = "amlogic, vecm";
@@ -622,7 +668,7 @@
 			opp-microvolt = <861000>;
 		};
 		opp10 {
-			opp-hz = /bits/ 64 <1896000000>;
+			opp-hz = /bits/ 64 <1908000000>;
 			opp-microvolt = <981000>;
 		};
 	};
@@ -717,6 +763,11 @@
 &adapter {
 	status = "okay";
 	memory-region = <&adapt_cma_reserved>;
+};
+
+&gdc {
+	status = "okay";
+	memory-region = <&gdc_cma_reserved>;
 };
 
 &meson_fb {
@@ -1078,6 +1129,14 @@
 		};
 	};
 
+	bl_pwm_off_pins:bl_pwm_off_pin {
+		mux {
+			pins = "GPIOH_5";
+			function = "gpio_periphs";
+			output-high;
+		};
+	};
+
 }; /* end of pinctrl_periphs */
 
 &pinctrl_aobus {
@@ -1272,10 +1331,16 @@
 
 &pcie_A {
 	reset-gpio = <&gpio GPIOX_7 GPIO_ACTIVE_HIGH>;
-	status = "okay";
+	status = "disabled";
 };
 
 &saradc {
 	status = "okay";
 };
 
+&spicc1 {
+	status = "disabled";
+	pinctrl-names = "default";
+	pinctrl-0 = <&spicc1_pins>;
+	cs-gpios = <&gpio GPIOH_6 0>;
+};

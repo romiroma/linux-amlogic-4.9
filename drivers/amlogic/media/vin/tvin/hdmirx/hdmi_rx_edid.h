@@ -19,8 +19,9 @@
 
 #define EDID_SIZE			256
 #define EDID_HDR_SIZE		7
+#define EDID_HDR_HEAD_LEN	4
+#define MAX_HDR_LUMI_LEN	3
 #define MAX_EDID_BUF_SIZE	512
-#define MAX_HDR_LUMI		3
 
 /* CEA861F Table 44~46 CEA data block tag code*/
 /* tag code 0x0: reserved */
@@ -621,4 +622,9 @@ unsigned char *rx_get_edid(int edid_index);
 void edid_parse_block0(uint8_t *p_edid, struct edid_info_s *edid_info);
 void edid_parse_cea_block(uint8_t *p_edid, struct edid_info_s *edid_info);
 void rx_edid_parse_print(struct edid_info_s *edid_info);
+void rx_modify_edid(unsigned char *buffer,
+				int len, unsigned char *addition);
+void rx_edid_update_audio_info(unsigned char *p_edid,
+						unsigned int len);
+extern bool is_ddc_idle(unsigned char port_id);
 #endif

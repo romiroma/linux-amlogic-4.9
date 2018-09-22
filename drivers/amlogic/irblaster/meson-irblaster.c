@@ -86,15 +86,16 @@ static struct tx_event *irblaster_event_get(void)
 {
 	struct tx_event *ev = NULL;
 
-	ev = kzalloc(sizeof(struct tx_event), GFP_KERNEL);
+	ev = devm_kzalloc(tx_dev->dev,
+			sizeof(struct tx_event), GFP_KERNEL);
 	irblaster_dbg("irblaster_event_get ev=0x%p\n", ev);
 	return ev;
 }
 
 static void irblaster_event_put(struct tx_event *ev)
 {
-	irblaster_dbg("irblaster_event_put ev=0x%p\n", ev);
-	kfree(ev);
+	irblaster_dbg("event_put ev=0x%p\n", ev);
+	devm_kfree(tx_dev->dev, ev);
 }
 
 static int irblaster_send_bit(unsigned int hightime, unsigned int lowtime,
@@ -359,6 +360,7 @@ int irblaster_send(const char *buf, int len)
 		j++;
 
 		if (j >= PS_SIZE) {
+			irblaster_event_put(ev);
 			pr_err("send timing value is out of range\n");
 			return -ENOMEM;
 		}
@@ -377,15 +379,21 @@ static long aml_ir_blaster_ioctl(struct file *filp, unsigned int cmd,
 
 	int consumerir_freqs = 0, duty_cycle = 0;
 	s32 r = 0;
-	char sendcode[MAX_PLUSE];
+	char *sendcode;
 	void __user *argp = (void __user *)args;
+
+	sendcode = kzalloc(MAX_PLUSE, GFP_KERNEL);
+	if (!sendcode)
+		return -ENOMEM;
 
 	irblaster_dbg("aml_ir_blaster_ioctl()  0x%4x\n ", cmd);
 	switch (cmd) {
 	case CONSUMERIR_TRANSMIT:
 		if (copy_from_user(sendcode, (char *)argp,
-					strlen((char *)argp)))
+					strlen((char *)argp))) {
+			kfree(sendcode);
 			return -EFAULT;
+		}
 		pr_info("send code is %s\n", sendcode);
 		r = irblaster_send(sendcode, strlen(argp));
 		break;
@@ -394,6 +402,7 @@ static long aml_ir_blaster_ioctl(struct file *filp, unsigned int cmd,
 		consumerir_freqs =
 				get_irblaster_consumerir_freqs(irblaster_win);
 		put_user(consumerir_freqs, (int *)argp);
+		kfree(sendcode);
 		return consumerir_freqs;
 	case SET_CARRIER:
 		pr_info("in set freq\n");
@@ -403,8 +412,10 @@ static long aml_ir_blaster_ioctl(struct file *filp, unsigned int cmd,
 		break;
 	case SET_DUTYCYCLE:
 		pr_info("in set duty_cycle\n");
-		if (copy_from_user(&duty_cycle, argp, sizeof(int)))
+		if (copy_from_user(&duty_cycle, argp, sizeof(int))) {
+			kfree(sendcode);
 			return -EFAULT;
+		}
 		get_user(duty_cycle, (int *)argp);
 		r = set_irblaster_duty_cycle(duty_cycle);
 		break;
@@ -414,6 +425,7 @@ static long aml_ir_blaster_ioctl(struct file *filp, unsigned int cmd,
 		break;
 	}
 
+	kfree(sendcode);
 	return r;
 }
 static int aml_ir_blaster_release(struct inode *inode, struct file *file)
@@ -560,13 +572,15 @@ static int  aml_ir_blaster_probe(struct platform_device *pdev)
 	void __iomem *reset_base = NULL;
 
 	pr_info("irblaster probe\n");
-	dev = kzalloc(sizeof(struct irtx_dev), GFP_KERNEL);
+	dev = devm_kzalloc(&pdev->dev,
+			sizeof(struct irtx_dev), GFP_KERNEL);
 	if (!dev) {
 		pr_info("faid to kzalloc  irtx_dev");
 		return -ENOMEM;
 	}
 
-	irblaster_win = kzalloc(sizeof(struct blaster_window), GFP_KERNEL);
+	irblaster_win = devm_kzalloc(&pdev->dev,
+			sizeof(struct blaster_window), GFP_KERNEL);
 	if (irblaster_win == NULL)
 		return -1;
 

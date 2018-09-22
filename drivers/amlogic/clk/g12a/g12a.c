@@ -654,6 +654,7 @@ static MESON_GATE(g12a_vclk2_encl, HHI_GCLK_OTHER, 23);
 static MESON_GATE(g12a_vclk2_venclmmc, HHI_GCLK_OTHER, 24);
 static MESON_GATE(g12a_vclk2_vencl, HHI_GCLK_OTHER, 25);
 static MESON_GATE(g12a_vclk2_other1, HHI_GCLK_OTHER, 26);
+static MESON_GATE(g12a_efuse, HHI_GCLK_SP_MPEG, 1);
 
 /* Array of all clocks provided by this provider */
 
@@ -742,6 +743,7 @@ static struct clk_hw *g12a_clk_hws[] = {
 	[CLKID_VCLK2_VENCLMMC]  = &g12a_vclk2_venclmmc.hw,
 	[CLKID_VCLK2_VENCL]     = &g12a_vclk2_vencl.hw,
 	[CLKID_VCLK2_OTHER1]    = &g12a_vclk2_other1.hw,
+	[CLKID_EFUSE]           = &g12a_efuse.hw,
 
 	[CLKID_CPU_FCLK_P]      = &g12a_cpu_fclk_p.hw,
 	[CLKID_CPU_CLK]         = &g12a_cpu_clk.mux.hw,
@@ -833,6 +835,7 @@ static struct clk_gate *g12a_clk_gates[] = {
 	&g12a_vclk2_venclmmc,
 	&g12a_vclk2_vencl,
 	&g12a_vclk2_other1,
+	&g12a_efuse,
 	&g12a_24m,
 	&g12a_12m_gate,
 };
@@ -870,24 +873,30 @@ static void __init g12a_clkc_init(struct device_node *np)
 	if (is_meson_g12b_cpu()) {
 		g12a_clk_hws[CLKID_CPU_CLK] = &g12b_cpu_clk1.mux.hw;
 		g12b_cpu_clk1.base = clk_base;
-		g12b_cpu_clk1.mux.reg = clk_base + (u64)g12b_cpu_clk1.mux.reg;
+		g12b_cpu_clk1.mux.reg = clk_base
+					+ (unsigned long)g12b_cpu_clk1.mux.reg;
 	} else {
 		g12a_cpu_clk.base = clk_base;
-		g12a_cpu_clk.mux.reg = clk_base + (u64)g12a_cpu_clk.mux.reg;
+		g12a_cpu_clk.mux.reg = clk_base
+					+ (unsigned long)g12a_cpu_clk.mux.reg;
 	}
 
-	g12a_cpu_fclk_p.reg = clk_base + (u64)g12a_cpu_fclk_p.reg;
+	g12a_cpu_fclk_p.reg = clk_base
+					+ (unsigned long)g12a_cpu_fclk_p.reg;
 
 	/* Populate the base address for the MPEG clks */
-	g12a_mpeg_clk_sel.reg = clk_base + (u64)g12a_mpeg_clk_sel.reg;
-	g12a_mpeg_clk_div.reg = clk_base + (u64)g12a_mpeg_clk_div.reg;
+	g12a_mpeg_clk_sel.reg = clk_base
+					+ (unsigned long)g12a_mpeg_clk_sel.reg;
+	g12a_mpeg_clk_div.reg = clk_base
+					+ (unsigned long)g12a_mpeg_clk_div.reg;
 
-	g12a_12m_div.reg = clk_base + (u64)g12a_12m_div.reg;
+	g12a_12m_div.reg = clk_base
+					+ (unsigned long)g12a_12m_div.reg;
 
 	/* Populate base address for gates */
 	for (i = 0; i < ARRAY_SIZE(g12a_clk_gates); i++)
 		g12a_clk_gates[i]->reg = clk_base +
-			(u64)g12a_clk_gates[i]->reg;
+			(unsigned long)g12a_clk_gates[i]->reg;
 
 	if (!clks) {
 		clks = kzalloc(NR_CLKS*sizeof(struct clk *), GFP_KERNEL);

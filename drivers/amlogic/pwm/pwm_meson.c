@@ -355,7 +355,10 @@ static int meson_pwm_apply(struct pwm_chip *chip, struct pwm_device *pwm,
 	    state->duty_cycle != channel->state.duty_cycle ||
 	    state->polarity != channel->state.polarity) {
 		if (channel->state.enabled) {
-			meson_pwm_disable(meson, pwm->hwpwm);
+			/*
+			 *Don't disable pwm when setting duty repeatedly
+			 *meson_pwm_disable(meson, pwm->hwpwm);
+			 */
 			channel->state.enabled = false;
 		}
 
@@ -441,7 +444,7 @@ static const char * const pwm_txlx_ee_parent_names[] = {
 };
 
 static const char * const pwm_txlx_ao_parent_names[] = {
-	"clk81", "xtal", "null", "null"
+	"xtal", "clk81", "null", "null"
 };
 
 static const char * const pwm_axg_ee_parent_names[] = {
@@ -525,6 +528,8 @@ static const struct of_device_id meson_pwm_matches[] = {
 	{ .compatible = "amlogic,g12b-ao-pwm", .data = &pwm_g12a_ao_data },
 	{ .compatible = "amlogic,txlx-ee-pwm", .data = &pwm_txlx_ee_data },
 	{ .compatible = "amlogic,txlx-ao-pwm", .data = &pwm_txlx_ao_data },
+	{ .compatible = "amlogic,txl-ee-pwm", .data = &pwm_txlx_ee_data },
+	{ .compatible = "amlogic,txl-ao-pwm", .data = &pwm_txlx_ao_data },
 	{ .compatible = "amlogic,axg-ee-pwm", .data = &pwm_axg_ee_data },
 	{ .compatible = "amlogic,axg-ao-pwm", .data = &pwm_axg_ao_data },
 	/*for gxl gxtvbb gxm*/

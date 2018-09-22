@@ -21,10 +21,11 @@
 #include "regs.h"
 #include "iomap.h"
 
-extern int resample_enable(int input_sr);
+extern void resample_enable(bool enable);
+extern int resample_init(int input_sr);
 extern int resample_disable(void);
 extern int resample_set_hw_param(int index);
 extern void resample_src_select(int src);
 extern void resample_format_set(int ch_num, int bits);
-
+extern void resample_reset(void);
 #endif

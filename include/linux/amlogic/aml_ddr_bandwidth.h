@@ -20,14 +20,12 @@
 
 
 #define DEFAULT_CLK_CNT			12000000
-#define DEFAULT_XTAL_FREQ		24000000
+#define DEFAULT_XTAL_FREQ		24000000UL
 
 #define DMC_QOS_IRQ			(1 << 30)
 #define MAX_CHANNEL			4
-#define MAX_PORTS			256
-#define MAX_NAME			15
-#define PORT_MAJOR			32
 
+#include <linux/amlogic/ddr_port.h>
 /*
  * register offset for chips before g12
  */
@@ -87,11 +85,6 @@ struct ddr_bandwidth_ops {
 #endif
 };
 
-struct ddr_port_desc {
-	char port_name[MAX_NAME];
-	unsigned char port_id;
-};
-
 struct ddr_bandwidth {
 	void __iomem *ddr_reg;
 	void __iomem *pll_reg;
@@ -114,7 +107,6 @@ extern unsigned int aml_get_ddr_usage(void);
 extern struct ddr_bandwidth_ops g12_ddr_bw_ops;
 extern struct ddr_bandwidth_ops gx_ddr_bw_ops;
 extern struct ddr_bandwidth_ops gxl_ddr_bw_ops;
-extern int ddr_find_port_desc(int cpu_type, struct ddr_port_desc **desc);
 #else
 static inline unsigned int aml_get_ddr_usage(void)
 {

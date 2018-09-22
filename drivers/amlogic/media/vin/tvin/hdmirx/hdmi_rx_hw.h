@@ -72,6 +72,12 @@
 
 #define PHY_RESISTOR_CALIBRATION_1 (0x10UL)
 #define PHY_MAIN_FSM_OVERRIDE1	(0x07UL)
+#define PHY_TERM_OVERRIDE _BIT(8)
+#define PHY_TERM_OV_VALUE MSK(4, 4)
+#define PHY_TERM_OV_PORT0 _BIT(4)
+#define PHY_TERM_OV_PORT1 _BIT(5)
+#define PHY_TERM_OV_PORT2 _BIT(6)
+#define PHY_TERM_OV_PORT3 _BIT(7)
 #define PHY_MAIN_FSM_OVERRIDE2	(0x08UL)
 
 #define PHY_MAIN_BIST_CONTROL	(0x0BUL)
@@ -974,6 +980,22 @@
 #define TMDS_CLK_MIN			(24000UL)
 #define TMDS_CLK_MAX			(340000UL)
 
+/*
+ * SMC CMD define
+ * call BL31 interface
+ */
+#define HDMIRX_RD_SEC_TOP	0x8200001d
+#define HDMIRX_WR_SEC_TOP	0x8200001e
+#define HDCP22_RX_ESM_READ	0x8200001f
+#define HDCP22_RX_ESM_WRITE	0x8200002f
+#define HDCP22_RX_SET_DUK_KEY	0x8200002e
+#define HDCP14_RX_SETKEY	0x8200002d
+
+enum hdcp14_key_mode_e {
+	NORMAL_MODE,
+	SECURE_MODE,
+};
+
 extern unsigned int hdmirx_addr_port;
 extern unsigned int hdmirx_data_port;
 extern unsigned int hdmirx_ctrl_port;
@@ -987,6 +1009,7 @@ extern int pd_fifo_start_cnt;
 extern int md_ists_en;
 extern int eq_ref_voltage;
 extern int aud_ch_map;
+extern int hdcp14_key_mode;
 
 extern void wr_reg_hhi(unsigned int offset, unsigned int val);
 extern unsigned int rd_reg_hhi(unsigned int offset);
@@ -1069,6 +1092,15 @@ extern unsigned char rx_get_hdcp14_sts(void);
 extern unsigned int rx_hdcp22_rd_reg_bits(unsigned int addr, unsigned int mask);
 extern int rx_get_aud_pll_err_sts(void);
 extern void rx_force_hpd_cfg(uint8_t hpd_level);
+extern int rx_set_port_hpd(uint8_t port_id, bool val);
+extern void rx_set_cur_hpd(uint8_t val);
+extern unsigned int rx_get_hdmi5v_sts(void);
+extern unsigned int rx_get_hpd_sts(void);
+
+extern void cec_hw_reset(void);
+extern void rx_force_hpd_cfg(uint8_t hpd_level);
+extern void rx_force_rxsense_cfg(uint8_t level);
+extern void rx_force_hpd_rxsense_cfg(uint8_t level);
 #endif
 
 

@@ -22,6 +22,7 @@ unsigned int ademod_debug_en;
 /* btsc_detect_delay for btsc detect delay */
 unsigned int btsc_detect_delay = 10;
 unsigned int nicam_detect_delay = 10;
+unsigned int a2_detect_delay = 300;
 /* signal_audmode for btsc signal audio mode */
 unsigned int signal_audmode;
 unsigned int audio_thd_threshold1 = 0x1000;
@@ -593,7 +594,7 @@ void set_eiaj(void)
 	adec_wr_reg(ADDR_DDC_FREQ0, aa);
 
 	aa = (int)((15.734e3*2)/(FCLK/4/16)*1024.0*1024.0*8.0);
-	aa = (0x80e40);
+	/* aa = (0x80e40); */
 	adec_wr_reg(ADDR_DDC_FREQ1, aa);
 
 
@@ -649,6 +650,9 @@ void set_nicam_dk(void)
 {
 	int aa;
 
+	adec_wr_reg(0x103, 0x1000000);
+	adec_wr_reg(0x115, 0x1503d);
+
 	adec_wr_reg(ADDR_ADEC_CTRL, AUDIO_STANDARD_NICAM_DK);
 
 	set_filter(filter_100k, ADDR_DDC_FIR0_COEF, 65);
@@ -671,6 +675,10 @@ void set_nicam_i(void)
 {
 	int aa;
 
+	adec_wr_reg(0x103, 0x1000000);
+	adec_wr_reg(0x110, 0xcb9581);
+	adec_wr_reg(0x115, 0x1503d);
+
 	adec_wr_reg(ADDR_ADEC_CTRL, AUDIO_STANDARD_NICAM_I);
 
 	set_filter(filter_100k, ADDR_DDC_FIR0_COEF, 65);
@@ -690,6 +698,9 @@ void set_nicam_i(void)
 void set_nicam_bg(void)
 {
 	int aa;
+
+	adec_wr_reg(0x103, 0x1000000);
+	adec_wr_reg(0x115, 0x1503d);
 
 	adec_wr_reg(ADDR_ADEC_CTRL, AUDIO_STANDARD_NICAM_BG);
 
@@ -793,6 +804,8 @@ void update_a2_eiaj_mode(int auto_en, int *stereo_flag, int *dual_flag)
 {
 	uint32_t reg_value;
 	uint32_t stereo_power, dual_power;
+
+	msleep(a2_detect_delay);
 
 	if (auto_en) {
 		reg_value = adec_rd_reg(CARRIER_MAG_REPORT);
@@ -914,6 +927,9 @@ void set_btsc_outputmode(uint32_t outmode)
 	 */
 	reg_value = adec_rd_reg(ADDR_ADEC_CTRL);
 
+	pr_info("%s regval:0x%x, signal_audmode:%d, outmode:%d\n",
+				__func__, reg_value, signal_audmode, outmode);
+
 	if (last_stereo_flag == stereo_flag
 			&& last_sap_flag == sap_flag
 			&& last_mode == outmode)
@@ -1022,6 +1038,9 @@ void set_a2_eiaj_outputmode(uint32_t outmode)
 	 */
 	reg_value = adec_rd_reg(ADDR_ADEC_CTRL);
 
+	pr_info("%s regval:0x%x, signal_audmode:%d, outmode:%d\n",
+				__func__, reg_value, signal_audmode, outmode);
+
 	if (last_stereo_flag == stereo_flag
 			&& last_dual_flag == dual_flag
 			&& last_mode == outmode)
@@ -1039,17 +1058,18 @@ void set_a2_eiaj_outputmode(uint32_t outmode)
 		}
 		break;
 	case 1: /* Stereo */
-		if (outmode != AUDIO_OUTMODE_A2_MONO &&
-			outmode != AUDIO_OUTMODE_A2_STEREO) {
+		if ((outmode != AUDIO_OUTMODE_A2_MONO &&
+			outmode != AUDIO_OUTMODE_A2_STEREO)
+			|| (last_stereo_flag != stereo_flag)) {
 			outmode = AUDIO_OUTMODE_A2_STEREO;
 			aud_mode = AUDIO_OUTMODE_A2_STEREO;
 		}
 		break;
 	case 2: /* Dual */
-		if (outmode != AUDIO_OUTMODE_A2_MONO &&
-			outmode != AUDIO_OUTMODE_A2_DUAL_A &&
+		if ((outmode != AUDIO_OUTMODE_A2_DUAL_A &&
 			outmode != AUDIO_OUTMODE_A2_DUAL_B &&
-			outmode != AUDIO_OUTMODE_A2_DUAL_AB) {
+			outmode != AUDIO_OUTMODE_A2_DUAL_AB)
+			|| (last_dual_flag != dual_flag)) {
 			outmode = AUDIO_OUTMODE_A2_DUAL_A;
 			aud_mode = AUDIO_OUTMODE_A2_DUAL_A;
 		}
@@ -1096,7 +1116,7 @@ void set_nicam_outputmode(uint32_t outmode)
 	uint32_t tmp_value = 0;
 	int nicam_mono_flag = 0, nicam_stereo_flag = 0, nicam_dual_flag = 0;
 	int nicam_lock = 0;
-	static int last_nicam_lock = -1, last_mono_flag = -1;
+	static int last_nicam_lock = -1, last_nicam_mono_flag = -1;
 	static int last_stereo_flag = -1, last_dual_flag = -1, last_mode = -1;
 
 	update_nicam_mode(&nicam_lock, &nicam_mono_flag,
@@ -1113,11 +1133,17 @@ void set_nicam_outputmode(uint32_t outmode)
 	 */
 	reg_value = adec_rd_reg(ADDR_ADEC_CTRL);
 
-	pr_info("%s nicam_lock:%d, regval:0x%x\n",
-			__func__, nicam_lock, reg_value);
+	pr_info("# pll lock: 0x%lx.\n",
+			atv_dmd_rd_byte(APB_BLOCK_ADDR_CARR_RCVY, 0x43)&0x01);
+	pr_info("# line lock: 0x%lx.\n",
+			atv_dmd_rd_byte(APB_BLOCK_ADDR_VDAGC, 0x4f)&0x10);
+
+	pr_info("%s nicam_lock:%d, regval:0x%x, signal_mode:%d, outmode:%d\n",
+			__func__, nicam_lock, reg_value,
+			signal_audmode, outmode);
 
 	if (last_nicam_lock == nicam_lock
-			&& last_mono_flag == nicam_mono_flag
+			&& last_nicam_mono_flag == nicam_mono_flag
 			&& last_stereo_flag == nicam_stereo_flag
 			&& last_dual_flag == nicam_dual_flag
 			&& last_mode == outmode)
@@ -1135,24 +1161,27 @@ void set_nicam_outputmode(uint32_t outmode)
 		}
 		break;
 	case 1: /* Stereo */
-		if (outmode != AUDIO_OUTMODE_NICAM_MONO &&
-			outmode != AUDIO_OUTMODE_NICAM_STEREO) {
+		if ((outmode != AUDIO_OUTMODE_NICAM_MONO &&
+			outmode != AUDIO_OUTMODE_NICAM_STEREO)
+			|| (last_stereo_flag != nicam_stereo_flag)) {
 			outmode = AUDIO_OUTMODE_NICAM_STEREO;
 			aud_mode = AUDIO_OUTMODE_NICAM_STEREO;
 		}
 		break;
 	case 2: /* Dual */
-		if (outmode != AUDIO_OUTMODE_NICAM_MONO &&
+		if ((outmode != AUDIO_OUTMODE_NICAM_MONO &&
 			outmode != AUDIO_OUTMODE_NICAM_DUAL_A &&
 			outmode != AUDIO_OUTMODE_NICAM_DUAL_B &&
-			outmode != AUDIO_OUTMODE_NICAM_DUAL_AB) {
+			outmode != AUDIO_OUTMODE_NICAM_DUAL_AB)
+			|| (last_dual_flag != nicam_dual_flag)) {
 			outmode = AUDIO_OUTMODE_NICAM_DUAL_A;
 			aud_mode = AUDIO_OUTMODE_NICAM_DUAL_A;
 		}
 		break;
 	case 3: /* NICAM MONO */
-		if (outmode != AUDIO_OUTMODE_NICAM_MONO &&
-			outmode != AUDIO_OUTMODE_NICAM_MONO1) {
+		if ((outmode != AUDIO_OUTMODE_NICAM_MONO &&
+			outmode != AUDIO_OUTMODE_NICAM_MONO1)
+			|| (last_nicam_mono_flag != nicam_mono_flag)) {
 			outmode = AUDIO_OUTMODE_NICAM_MONO1;
 			aud_mode = AUDIO_OUTMODE_NICAM_MONO1;
 		}
@@ -1218,7 +1247,7 @@ void set_nicam_outputmode(uint32_t outmode)
 	pr_info("[%s] tmp_value: 0x%x.\n", __func__, reg_value);
 
 	last_nicam_lock = nicam_lock;
-	last_mono_flag = nicam_mono_flag;
+	last_nicam_mono_flag = nicam_mono_flag;
 	last_stereo_flag = nicam_stereo_flag;
 	last_dual_flag = nicam_dual_flag;
 	last_mode = outmode;

@@ -55,6 +55,7 @@
 #include "amcsc.h"
 #include "keystone_correction.h"
 #include "bitdepth.h"
+#include "cm2_adj.h"
 #include <linux/amlogic/media/amdolbyvision/dolby_vision.h>
 #include "dnlp_cal.h"
 #include "vlock.h"
@@ -72,7 +73,7 @@
 #define AMVECM_MODULE_NAME        "amvecm"
 #define AMVECM_DEVICE_NAME        "amvecm"
 #define AMVECM_CLASS_NAME         "amvecm"
-#define AMVECM_VER				"Ref.2018/07/03"
+#define AMVECM_VER				"Ref.2018/09/03"
 
 
 struct amvecm_dev_s {
@@ -110,6 +111,16 @@ static unsigned int pre_hist_height, pre_hist_width;
 static unsigned int pc_mode = 0xff;
 static unsigned int pc_mode_last = 0xff;
 static struct hdr_metadata_info_s vpp_hdr_metadata_s;
+
+/*bit0: brightness
+ *bit1: brightness2
+ *bit2: saturation_hue
+ *bit3: saturation_hue_post
+ *bit4: contrast
+ *bit5: contrast2
+ */
+static int vdj_mode_flg;
+struct am_vdj_mode_s vdj_mode_s;
 
 void __iomem *amvecm_hiu_reg_base;/* = *ioremap(0xc883c000, 0x2000); */
 
@@ -212,6 +223,26 @@ static int __init amvecm_load_pq_val(char *str)
 }
 __setup("pq=", amvecm_load_pq_val);
 
+static int amvecm_set_contrast2(int val)
+{
+	val += 0x80;
+	WRITE_VPP_REG_BITS(VPP_VADJ2_Y,
+		val, 0, 8);
+	WRITE_VPP_REG_BITS(VPP_VADJ_CTRL, 1, 2, 1);
+	return 0;
+}
+
+static int amvecm_set_brightness2(int val)
+{
+	if (get_cpu_type() <= MESON_CPU_MAJOR_ID_GXTVBB)
+		WRITE_VPP_REG_BITS(VPP_VADJ2_Y,
+			vdj_mode_s.brightness2, 8, 9);
+	else
+		WRITE_VPP_REG_BITS(VPP_VADJ2_Y,
+			vdj_mode_s.brightness2 << 1, 8, 10);
+	WRITE_VPP_REG_BITS(VPP_VADJ_CTRL, 1, 2, 1);
+	return 0;
+}
 
 static void amvecm_size_patch(void)
 {
@@ -317,14 +348,7 @@ static ssize_t video_adj2_brightness_store(struct class *cla,
 	r = sscanf(buf, "%d\n", &val);
 	if ((r != 1) || (val < -255) || (val > 255))
 		return -EINVAL;
-
-	if (get_cpu_type() <= MESON_CPU_MAJOR_ID_GXTVBB)
-		WRITE_VPP_REG_BITS(VPP_VADJ2_Y, val, 8, 9);
-	else
-		WRITE_VPP_REG_BITS(VPP_VADJ2_Y, val << 1, 8, 10);
-
-	WRITE_VPP_REG_BITS(VPP_VADJ_CTRL, 1, 2, 1);
-
+	amvecm_set_brightness2(val);
 	return count;
 }
 
@@ -345,13 +369,9 @@ static ssize_t video_adj2_contrast_store(struct class *cla,
 	r = sscanf(buf, "%d\n", &val);
 	if ((r != 1) || (val < -127) || (val > 127))
 		return -EINVAL;
-
-	val += 0x80;
-
-	WRITE_VPP_REG_BITS(VPP_VADJ2_Y, val, 0, 8);
-	WRITE_VPP_REG_BITS(VPP_VADJ_CTRL, 1, 2, 1);
-
+	amvecm_set_contrast2(val);
 	return count;
+
 }
 
 static ssize_t amvecm_usage_show(struct class *cla,
@@ -685,6 +705,7 @@ static unsigned int vpp_luma_max;
 void vpp_get_vframe_hist_info(struct vframe_s *vf)
 {
 	unsigned int hist_height, hist_width;
+	u64 divid;
 
 	hist_height = READ_VPP_REG_BITS(VPP_IN_H_V_SIZE, 0, 13);
 	hist_width = READ_VPP_REG_BITS(VPP_IN_H_V_SIZE, 16, 13);
@@ -845,10 +866,10 @@ void vpp_get_vframe_hist_info(struct vframe_s *vf)
 			VI_HIST_ON_BIN_63_BIT, VI_HIST_ON_BIN_63_WID);
 	if (debug_game_mode_1 &&
 		(vpp_luma_max != vf->prop.hist.vpp_luma_max)) {
-		vf->ready_clock_hist[1] = sched_clock();
+		divid = vf->ready_clock_hist[1] = sched_clock();
+		do_div(divid, 1000);
 		pr_info("vpp output done %lld us. luma_max(0x%x-->0x%x)\n",
-			vf->ready_clock_hist[1]/1000,
-			vpp_luma_max, vf->prop.hist.vpp_luma_max);
+			divid, vpp_luma_max, vf->prop.hist.vpp_luma_max);
 		vpp_luma_max = vf->prop.hist.vpp_luma_max;
 	}
 }
@@ -946,6 +967,8 @@ int amvecm_on_vs(
 	if (for_dolby_vision_certification())
 		return 0;
 #endif
+	if (!dnlp_insmod_ok)
+		dnlp_alg_param_init();
 	if (flags & CSC_FLAG_CHECK_OUTPUT) {
 		if (toggle_vf)
 			amvecm_fresh_overscan(toggle_vf);
@@ -989,15 +1012,6 @@ int amvecm_on_vs(
 		amvecm_fresh_overscan(vf);
 	else
 		amvecm_reset_overscan();
-	/* todo:vlock processs only for tv chip */
-	if (is_meson_gxtvbb_cpu() ||
-		is_meson_txl_cpu() || is_meson_txlx_cpu()
-		|| is_meson_txhd_cpu()) {
-		if (vf != NULL)
-			amve_vlock_process(vf);
-		else
-			amve_vlock_resume();
-	}
 
 	/* pq latch process */
 	amvecm_video_latch();
@@ -1040,6 +1054,130 @@ static int amvecm_release(struct inode *inode, struct file *file)
 static struct am_regs_s amregs_ext;
 struct ve_pq_overscan_s overscan_table[TIMING_MAX];
 
+static int parse_para_pq(const char *para, int para_num, int *result)
+{
+	char *token = NULL;
+	char *params, *params_base;
+	int *out = result;
+	int len = 0, count = 0;
+	int res = 0;
+
+	if (!para)
+		return 0;
+
+	params = kstrdup(para, GFP_KERNEL);
+	params_base = params;
+	token = params;
+	len = strlen(token);
+	do {
+		token = strsep(&params, " ");
+		while (token && (isspace(*token)
+				|| !isgraph(*token)) && len) {
+			token++;
+			len--;
+		}
+		if (len == 0)
+			break;
+		if (!token || kstrtoint(token, 0, &res) < 0)
+			break;
+		len = strlen(token);
+		*out++ = res;
+		count++;
+	} while ((token) && (count < para_num) && (len > 0));
+
+	kfree(params_base);
+	return count;
+}
+
+static int amvecm_set_saturation_hue(int mab)
+{
+	s16 mc = 0, md = 0;
+	s16 ma, mb;
+
+	if (mab&0xfc00fc00)
+		return -EINVAL;
+	ma = (s16)((mab << 6) >> 22);
+	mb = (s16)((mab << 22) >> 22);
+
+	saturation_ma = ma - 0x100;
+	saturation_mb = mb;
+
+	ma += saturation_ma_shift;
+	mb += saturation_mb_shift;
+	if (ma > 511)
+		ma = 511;
+	if (ma < -512)
+		ma = -512;
+	if (mb > 511)
+		mb = 511;
+	if (mb < -512)
+		mb = -512;
+	mab =  ((ma & 0x3ff) << 16) | (mb & 0x3ff);
+	WRITE_VPP_REG(VPP_VADJ1_MA_MB, mab);
+	mc = (s16)((mab<<22)>>22); /* mc = -mb */
+	mc = 0 - mc;
+	if (mc > 511)
+		mc = 511;
+	if (mc <  -512)
+		mc = -512;
+	md = (s16)((mab<<6)>>22);  /* md =  ma; */
+	mab = ((mc&0x3ff)<<16)|(md&0x3ff);
+	WRITE_VPP_REG(VPP_VADJ1_MC_MD, mab);
+	WRITE_VPP_REG_BITS(VPP_VADJ_CTRL, 1, 0, 1);
+	pr_amvecm_dbg("%s set video_saturation_hue OK!!!\n", __func__);
+	return 0;
+}
+
+static int amvecm_set_saturation_hue_post(int val1,
+	int val2)
+{
+	int i, ma, mb, mab, mc, md;
+	int hue_cos[] = {
+		/*0~12*/
+		256, 256, 256, 255, 255, 254, 253, 252, 251, 250,
+		248, 247, 245, 243, 241, 239, 237, 234, 231, 229,
+		226, 223, 220, 216, 213, 209  /*13~25*/
+	};
+	int hue_sin[] = {
+		-147, -142, -137, -132, -126, -121, -115, -109, -104,
+		-98, -92, -86, -80, /*-25~-13*/-74,  -68,  -62,  -56,
+		-50,  -44,  -38,  -31,  -25, -19, -13,  -6, /*-12~-1*/
+		0, /*0*/
+		6,   13,   19,	25,   31,   38,   44,	50,   56,
+		62,	68,  74,      /*1~12*/	80,   86,   92,	98,  104,
+		109,  115,  121,  126,  132, 137, 142, 147 /*13~25*/
+	};
+
+	saturation_post = val1;
+	hue_post = val2;
+	i = (hue_post > 0) ? hue_post : -hue_post;
+	ma = (hue_cos[i]*(saturation_post + 128)) >> 7;
+	mb = (hue_sin[25+hue_post]*(saturation_post + 128)) >> 7;
+	if (ma > 511)
+		ma = 511;
+	if (ma < -512)
+		ma = -512;
+	if (mb > 511)
+		mb = 511;
+	if (mb < -512)
+		mb = -512;
+	mab =  ((ma & 0x3ff) << 16) | (mb & 0x3ff);
+	pr_info("\n[amvideo..] saturation_post:%d hue_post:%d mab:%x\n",
+			saturation_post, hue_post, mab);
+	WRITE_VPP_REG(VPP_VADJ2_MA_MB, mab);
+	mc = (s16)((mab<<22)>>22); /* mc = -mb */
+	mc = 0 - mc;
+	if (mc > 511)
+		mc = 511;
+	if (mc < -512)
+		mc = -512;
+	md = (s16)((mab<<6)>>22);  /* md =	ma; */
+	mab = ((mc&0x3ff)<<16)|(md&0x3ff);
+	WRITE_VPP_REG(VPP_VADJ2_MC_MD, mab);
+	WRITE_VPP_REG_BITS(VPP_VADJ_CTRL, 1, 2, 1);
+	return 0;
+}
+
 static long amvecm_ioctl(struct file *file,
 		unsigned int cmd, unsigned long arg)
 {
@@ -1081,12 +1219,6 @@ static long amvecm_ioctl(struct file *file,
 			ret = -EFAULT;
 		} else
 			ret = cm_load_reg(&amregs_ext);
-		break;
-	case AMVECM_IOC_VE_DNLP_EN:
-		vecm_latch_flag |= FLAG_VE_DNLP_EN;
-		break;
-	case AMVECM_IOC_VE_DNLP_DIS:
-		vecm_latch_flag |= FLAG_VE_DNLP_DIS;
 		break;
 	case AMVECM_IOC_VE_NEW_DNLP:
 		if (copy_from_user(&dnlp_curve_param_load,
@@ -1204,7 +1336,7 @@ static long amvecm_ioctl(struct file *file,
 	case AMVECM_IOC_3D_SYNC_DIS:
 		vecm_latch_flag |= FLAG_3D_SYNC_DIS;
 		break;
-	case AMVECM_IOC_GET_OVERSCAN:
+	case AMVECM_IOC_SET_OVERSCAN:
 		if (copy_from_user(&vpp_pq_load,
 				(void __user *)arg,
 				sizeof(struct ve_pq_load_s))) {
@@ -1256,6 +1388,114 @@ static long amvecm_ioctl(struct file *file,
 				vpp_pq_load_table[i].value2 & 0xffff;
 			overscan_table[i].ve =
 				(vpp_pq_load_table[i].value2 >> 16) & 0xffff;
+		}
+		break;
+	case AMVECM_IOC_G_DNLP_STATE:
+		if (copy_to_user((void __user *)arg,
+				&dnlp_en, sizeof(enum dnlp_state_e)))
+			ret = -EFAULT;
+		break;
+	case AMVECM_IOC_S_DNLP_STATE:
+		if (copy_from_user(&dnlp_en,
+			(void __user *)arg, sizeof(enum dnlp_state_e)))
+			ret = -EFAULT;
+		break;
+	case AMVECM_IOC_G_PQMODE:
+		argp = (void __user *)arg;
+		if (copy_to_user(argp,
+				&pc_mode, sizeof(enum pc_mode_e)))
+			ret = -EFAULT;
+		break;
+	case AMVECM_IOC_S_PQMODE:
+		if (copy_from_user(&pc_mode,
+			(void __user *)arg, sizeof(enum pc_mode_e)))
+			ret = -EFAULT;
+		else
+			pc_mode_last = 0xff;
+		break;
+	case AMVECM_IOC_G_CSCTYPE:
+		argp = (void __user *)arg;
+		if (copy_to_user(argp,
+				&cur_csc_type, sizeof(enum vpp_matrix_csc_e)))
+			ret = -EFAULT;
+		break;
+	case AMVECM_IOC_S_CSCTYPE:
+		if (copy_from_user(&cur_csc_type,
+				(void __user *)arg,
+				sizeof(enum vpp_matrix_csc_e))) {
+			ret = -EFAULT;
+			pr_amvecm_dbg("[amvecm..] cur_csc_type ioctl copy fail!!\n");
+		}
+		break;
+	case AMVECM_IOC_G_PIC_MODE:
+		argp = (void __user *)arg;
+		if (copy_to_user(argp,
+			&vdj_mode_s, sizeof(struct am_vdj_mode_s)))
+			ret = -EFAULT;
+		break;
+	case AMVECM_IOC_S_PIC_MODE:
+		if (copy_from_user(&vdj_mode_s,
+				(void __user *)arg,
+				sizeof(struct am_vdj_mode_s))) {
+			ret = -EFAULT;
+			pr_amvecm_dbg("[amvecm..] vdj_mode_s ioctl copy fail!!\n");
+			break;
+		}
+		vdj_mode_flg = vdj_mode_s.flag;
+		if (vdj_mode_flg & 0x1) { /*brightness*/
+			vd1_brightness = vdj_mode_s.brightness;
+			vecm_latch_flag |= FLAG_VADJ1_BRI;
+		}
+		if (vdj_mode_flg & 0x2) { /*brightness2*/
+			if ((vdj_mode_s.brightness2 < -255) ||
+				(vdj_mode_s.brightness2 > 255)) {
+				pr_amvecm_dbg("load brightness2 value invalid!!!\n");
+				return -EINVAL;
+			}
+			ret = amvecm_set_brightness2(vdj_mode_s.brightness2);
+		}
+		if (vdj_mode_flg & 0x4)	{ /*saturation_hue*/
+			ret =
+			amvecm_set_saturation_hue(vdj_mode_s.saturation_hue);
+		}
+		if (vdj_mode_flg & 0x8) { /*saturation_hue_post*/
+			int parsed[2];
+			int saturation_hue_post;
+			char *buf;
+
+			saturation_hue_post = vdj_mode_s.saturation_hue_post;
+			buf = (char *) &saturation_hue_post;
+			if (likely(parse_para_pq(buf, 2, parsed) != 2)) {
+				ret = -EINVAL;
+				break;
+			}
+			if ((parsed[0] < -128) || (parsed[0] > 128) ||
+				(parsed[1] < -25) || (parsed[1] > 25)) {
+				ret = -EINVAL;
+				break;
+			}
+			ret = amvecm_set_saturation_hue_post(parsed[0],
+				 parsed[1]);
+		}
+		if (vdj_mode_flg & 0x10) { /*contrast*/
+			if ((vdj_mode_s.contrast < -1024)
+				|| (vdj_mode_s.contrast > 1024)) {
+				ret = -EINVAL;
+				pr_amvecm_dbg("[amvecm..] ioctrl contrast value invalid!!\n");
+				break;
+			}
+			vd1_contrast = vdj_mode_s.contrast;
+			vecm_latch_flag |= FLAG_VADJ1_CON;
+			vecm_latch_flag |= FLAG_VADJ1_COLOR;
+		}
+		if (vdj_mode_flg & 0x20) { /*constract2*/
+			if ((vdj_mode_s.contrast2 < -127)
+				|| (vdj_mode_s.contrast2 > 127)) {
+				ret = -EINVAL;
+				pr_amvecm_dbg("[amvecm..] ioctrl contrast2 value invalid!!\n");
+				break;
+			}
+			ret = amvecm_set_contrast2(vdj_mode_s.contrast2);
 		}
 		break;
 	default:
@@ -1342,6 +1582,12 @@ static ssize_t amvecm_dnlp_debug_store(struct class *cla,
 		return 0;
 	buf_orig = kstrdup(buf, GFP_KERNEL);
 	parse_param_amvecm(buf_orig, (char **)&parm);
+
+	if (!dnlp_insmod_ok) {
+		pr_info("dnlp insmod fial\n");
+		goto free_buf;
+	}
+
 	if (!strcmp(parm[0], "r")) {/*read param*/
 		if (!strcmp(parm[1], "param")) {
 			if (!strcmp(parm[2], "all")) {
@@ -1363,188 +1609,164 @@ static ssize_t amvecm_dnlp_debug_store(struct class *cla,
 					break;
 				}
 			}
+			dnlp_dbg_node_copy();
 		}
 	} else if (!strcmp(parm[0], "w")) {/*write param*/
 		for (i = 0; dnlp_parse_cmd[i].value; i++) {
 			if (!strcmp(parm[1],
 					dnlp_parse_cmd[i].parse_string)) {
-				if (kstrtoul(parm[2], 10, &val) < 0) {
-					kfree(buf_orig);
-					kfree(stemp);
-					return -EINVAL;
-				}
+				if (kstrtoul(parm[2], 10, &val) < 0)
+					goto free_buf;
+
 				*(dnlp_parse_cmd[i].value) = val;
 				pr_amvecm_dbg(" %s: %d\n",
 					dnlp_parse_cmd[i].parse_string,
 					*(dnlp_parse_cmd[i].value));
 				break;
 			}
+			dnlp_dbg_node_copy();
 		}
 	} else if (!strcmp(parm[0], "rc")) {/*read curve*/
 		if (!strcmp(parm[1], "scurv_low")) {
 			if (parm[2] == NULL) {
 				pr_info("error cmd\n");
-				kfree(buf_orig);
-				kfree(stemp);
-				return -EINVAL;
+				goto free_buf;
 			} else if (!strcmp(parm[2], "all")) {
 				for (i = 0; i < 65; i++)
-					d_convert_str(dnlp_scurv_low[i],
+					d_convert_str(dnlp_scurv_low_copy[i],
 						i, stemp, 4);
 					pr_info("%s\n", stemp);
 			} else {
-				if (kstrtoul(parm[2], 10, &val) < 0) {
-					kfree(stemp);
-					kfree(buf_orig);
-					return -EINVAL;
-				}
+				if (kstrtoul(parm[2], 10, &val) < 0)
+					goto free_buf;
+
 				if ((val > 64) || (val < 0))
 					pr_info("error cmd\n");
 				else
-					pr_info("%d\n", dnlp_scurv_low[val]);
+					pr_info("%d\n",
+						dnlp_scurv_low_copy[val]);
 			}
 		} else if (!strcmp(parm[1], "scurv_mid1")) {
 			if (parm[2] == NULL) {
 				pr_info("error cmd\n");
-				kfree(buf_orig);
-				kfree(stemp);
-				return -EINVAL;
+				goto free_buf;
 			} else if (!strcmp(parm[2], "all")) {
 				for (i = 0; i < 65; i++)
-					d_convert_str(dnlp_scurv_mid1[i],
+					d_convert_str(dnlp_scurv_mid1_copy[i],
 						i, stemp, 4);
 					pr_info("%s\n", stemp);
 			} else {
-				if (kstrtoul(parm[2], 10, &val) < 0) {
-					kfree(stemp);
-					kfree(buf_orig);
-					return -EINVAL;
-				}
+				if (kstrtoul(parm[2], 10, &val) < 0)
+					goto free_buf;
+
 				if ((val > 64) || (val < 0))
 					pr_info("error cmd\n");
 				else
-					pr_info("%d\n", dnlp_scurv_mid1[val]);
+					pr_info("%d\n",
+						dnlp_scurv_mid1_copy[val]);
 			}
 		} else if (!strcmp(parm[1], "scu v_mid2")) {
 			if (parm[2] == NULL) {
 				pr_info("error cmd\n");
-				kfree(stemp);
-				kfree(buf_orig);
-				return -EINVAL;
+				goto free_buf;
 			} else if (!strcmp(parm[2], "all")) {
 				for (i = 0; i < 65; i++)
-					d_convert_str(dnlp_scurv_mid2[i],
+					d_convert_str(dnlp_scurv_mid2_copy[i],
 						i, stemp, 4);
 					pr_info("%s\n", stemp);
 			} else {
-				if (kstrtoul(parm[2], 10, &val) < 0) {
-					kfree(stemp);
-					kfree(buf_orig);
-					return -EINVAL;
-				}
+				if (kstrtoul(parm[2], 10, &val) < 0)
+					goto free_buf;
+
 				if ((val > 64) || (val < 0))
 					pr_info("error cmd\n");
 				else
-					pr_info("%d\n", dnlp_scurv_mid2[val]);
+					pr_info("%d\n",
+						dnlp_scurv_mid2_copy[val]);
 			}
 		} else if (!strcmp(parm[1], "scurv_hgh1")) {
 			if (parm[2] == NULL) {
 				pr_info("error cmd\n");
-				kfree(stemp);
-				kfree(buf_orig);
-				return -EINVAL;
+				goto free_buf;
 			} else if (!strcmp(parm[2], "all")) {
 				for (i = 0; i < 65; i++)
-					d_convert_str(dnlp_scurv_hgh1[i],
+					d_convert_str(dnlp_scurv_hgh1_copy[i],
 						i, stemp, 4);
 					pr_info("%s\n", stemp);
 			} else {
-				if (kstrtoul(parm[2], 10, &val) < 0) {
-					kfree(stemp);
-					kfree(buf_orig);
-					return -EINVAL;
-				}
+				if (kstrtoul(parm[2], 10, &val) < 0)
+					goto free_buf;
+
 				if ((val > 64) || (val < 0))
 					pr_info("error cmd\n");
 				else
-					pr_info("%d\n", dnlp_scurv_hgh1[val]);
+					pr_info("%d\n",
+						dnlp_scurv_hgh1_copy[val]);
 			}
 		} else if (!strcmp(parm[1], "scurv_hgh2")) {
 			if (parm[2] == NULL) {
 				pr_info("error cmd\n");
-				kfree(stemp);
-				kfree(buf_orig);
-				return -EINVAL;
+				goto free_buf;
 			} else if (!strcmp(parm[2], "all")) {
 				for (i = 0; i < 65; i++)
-					d_convert_str(dnlp_scurv_hgh2[i],
+					d_convert_str(dnlp_scurv_hgh2_copy[i],
 						i, stemp, 4);
 					pr_info("%s\n", stemp);
 			} else {
-				if (kstrtoul(parm[2], 10, &val) < 0) {
-					kfree(stemp);
-					kfree(buf_orig);
-					return -EINVAL;
-				}
+				if (kstrtoul(parm[2], 10, &val) < 0)
+					goto free_buf;
+
 				if ((val > 64) || (val < 0))
 					pr_info("error cmd\n");
 				else
-					pr_info("%d\n", dnlp_scurv_hgh2[val]);
+					pr_info("%d\n",
+						dnlp_scurv_hgh2_copy[val]);
 			}
 		} else if (!strcmp(parm[1], "gain_var_lut49")) {
 			if (parm[2] == NULL) {
 				pr_info("error cmd\n");
-				kfree(stemp);
-				kfree(buf_orig);
-				return -EINVAL;
+				goto free_buf;
 			} else if (!strcmp(parm[2], "all")) {
 				for (i = 0; i < 49; i++)
-					d_convert_str(gain_var_lut49[i],
+					d_convert_str(gain_var_lut49_copy[i],
 						i, stemp, 4);
 					pr_info("%s\n", stemp);
 			} else {
-				if (kstrtoul(parm[2], 10, &val) < 0) {
-					kfree(stemp);
-					kfree(buf_orig);
-					return -EINVAL;
-				}
+				if (kstrtoul(parm[2], 10, &val) < 0)
+					goto free_buf;
+
 				if ((val > 48) || (val < 0))
 					pr_info("error cmd\n");
 				else
-					pr_info("%d\n", gain_var_lut49[val]);
+					pr_info("%d\n",
+						gain_var_lut49_copy[val]);
 			}
 		} else if (!strcmp(parm[1], "wext_gain")) {
 			if (parm[2] == NULL) {
 				pr_info("error cmd\n");
-				kfree(stemp);
-				kfree(buf_orig);
-				return -EINVAL;
+				goto free_buf;
 			} else if (!strcmp(parm[2], "all")) {
 				for (i = 0; i < 48; i++)
-					d_convert_str(wext_gain[i],
+					d_convert_str(wext_gain_copy[i],
 						i, stemp, 4);
 					pr_info("%s\n", stemp);
 			} else {
-				if (kstrtoul(parm[2], 10, &val) < 0) {
-					kfree(stemp);
-					kfree(buf_orig);
-					return -EINVAL;
-				}
+				if (kstrtoul(parm[2], 10, &val) < 0)
+					goto free_buf;
+
 				if ((val > 47) || (val < 0))
 					pr_info("error cmd\n");
 				else
-					pr_info("%d\n", wext_gain[val]);
+					pr_info("%d\n", wext_gain_copy[val]);
 			}
 		} else if (!strcmp(parm[1], "ve_dnlp_tgt")) {
 			/*read only curve*/
 			if (parm[2] == NULL) {
 				pr_info("error cmd\n");
-				kfree(stemp);
-				kfree(buf_orig);
-				return -EINVAL;
+				goto free_buf;
 			} else if (!strcmp(parm[2], "all")) {
 				for (i = 0; i < 65; i++)
-					d_convert_str(ve_dnlp_tgt[i],
+					d_convert_str(ve_dnlp_tgt_copy[i],
 						i, stemp, 4);
 					pr_info("%s\n", stemp);
 			} else
@@ -1553,12 +1775,10 @@ static ssize_t amvecm_dnlp_debug_store(struct class *cla,
 			/*read only curve*/
 			if (parm[2] == NULL) {
 				pr_info("error cmd\n");
-				kfree(stemp);
-				kfree(buf_orig);
-				return -EINVAL;
+				goto free_buf;
 			} else if (!strcmp(parm[2], "all")) {
 				for (i = 0; i < 65; i++)
-					d_convert_str(GmScurve[i],
+					d_convert_str(GmScurve_copy[i],
 						i, stemp, 4);
 					pr_info("%s\n", stemp);
 			} else
@@ -1567,12 +1787,10 @@ static ssize_t amvecm_dnlp_debug_store(struct class *cla,
 			/*read only curve*/
 			if (parm[2] == NULL) {
 				pr_info("error cmd\n");
-				kfree(stemp);
-				kfree(buf_orig);
-				return -EINVAL;
+				goto free_buf;
 			} else if (!strcmp(parm[2], "all")) {
 				for (i = 0; i < 65; i++)
-					d_convert_str(clash_curve[i],
+					d_convert_str(clash_curve_copy[i],
 						i, stemp, 4);
 					pr_info("%s\n", stemp);
 			} else
@@ -1581,12 +1799,10 @@ static ssize_t amvecm_dnlp_debug_store(struct class *cla,
 			/*read only curve*/
 			if (parm[2] == NULL) {
 				pr_info("error cmd\n");
-				kfree(stemp);
-				kfree(buf_orig);
-				return -EINVAL;
+				goto free_buf;
 			} else if (!strcmp(parm[2], "all")) {
 				for (i = 0; i < 65; i++)
-					d_convert_str(clsh_scvbld[i],
+					d_convert_str(clsh_scvbld_copy[i],
 						i, stemp, 4);
 					pr_info("%s\n", stemp);
 			} else
@@ -1595,12 +1811,10 @@ static ssize_t amvecm_dnlp_debug_store(struct class *cla,
 			/*read only curve*/
 			if (parm[2] == NULL) {
 				pr_info("error cmd\n");
-				kfree(stemp);
-				kfree(buf_orig);
-				return -EINVAL;
+				goto free_buf;
 			} else if (!strcmp(parm[2], "all")) {
 				for (i = 0; i < 65; i++)
-					d_convert_str(blkwht_ebld[i],
+					d_convert_str(blkwht_ebld_copy[i],
 						i, stemp, 4);
 					pr_info("%s\n", stemp);
 			} else
@@ -1609,9 +1823,7 @@ static ssize_t amvecm_dnlp_debug_store(struct class *cla,
 			/*read only curve*/
 			if (parm[2] == NULL) {
 				pr_info("error cmd\n");
-				kfree(stemp);
-				kfree(buf_orig);
-				return -EINVAL;
+				goto free_buf;
 			} else if (!strcmp(parm[2], "all")) {
 				for (i = 0; i < 64; i++)
 					d_convert_str(
@@ -1625,212 +1837,182 @@ static ssize_t amvecm_dnlp_debug_store(struct class *cla,
 		if (!strcmp(parm[1], "scurv_low")) {
 			if (parm[2] == NULL) {
 				pr_info("error cmd\n");
-				kfree(stemp);
-				kfree(buf_orig);
-				return -EINVAL;
+				goto free_buf;
 			} else if (!strcmp(parm[2], "all")) {
 				str_sapr_to_d(parm[3], curve_val, 5);
 				for (i = 0; i < 65; i++)
-					dnlp_scurv_low[i] = curve_val[i];
+					dnlp_scurv_low_copy[i] = curve_val[i];
 			} else {
-				if (kstrtoul(parm[2], 10, &val) < 0) {
-					kfree(stemp);
-					kfree(buf_orig);
-					return -EINVAL;
-				}
+				if (kstrtoul(parm[2], 10, &val) < 0)
+					goto free_buf;
+
 				num = val;
-				if (kstrtoul(parm[3], 10, &val) < 0) {
-					kfree(buf_orig);
-					kfree(stemp);
-					return -EINVAL;
-				}
+				if (kstrtoul(parm[3], 10, &val) < 0)
+					goto free_buf;
+
 				if (num > 64)
 					pr_info("error cmd\n");
 				else
-					dnlp_scurv_low[num] = val;
+					dnlp_scurv_low_copy[num] = val;
 			}
 		} else if (!strcmp(parm[1], "scurv_mid1")) {
 			if (parm[2] == NULL) {
 				pr_info("error cmd\n");
-				kfree(stemp);
-				kfree(buf_orig);
-				return -EINVAL;
+				goto free_buf;
 			} else if (!strcmp(parm[2], "all")) {
 				str_sapr_to_d(parm[3], curve_val, 5);
 				for (i = 0; i < 65; i++)
-					dnlp_scurv_mid1[i] = curve_val[i];
+					dnlp_scurv_mid1_copy[i] = curve_val[i];
 			} else {
-				if (kstrtoul(parm[2], 10, &val) < 0) {
-					kfree(stemp);
-					kfree(buf_orig);
-					return -EINVAL;
-				}
+				if (kstrtoul(parm[2], 10, &val) < 0)
+					goto free_buf;
+
 				num = val;
-				if (kstrtoul(parm[3], 10, &val) < 0) {
-					kfree(buf_orig);
-					kfree(stemp);
-					return -EINVAL;
-				}
+				if (kstrtoul(parm[3], 10, &val) < 0)
+					goto free_buf;
+
 				if (num > 64)
 					pr_info("error cmd\n");
 				else
-					dnlp_scurv_mid1[num] = val;
+					dnlp_scurv_mid1_copy[num] = val;
 			}
 		} else if (!strcmp(parm[1], "scurv_mid2")) {
 			if (parm[2] == NULL) {
 				pr_info("error cmd\n");
-				kfree(stemp);
-				kfree(buf_orig);
-				return -EINVAL;
+				goto free_buf;
 			} else if (!strcmp(parm[2], "all")) {
 				str_sapr_to_d(parm[3], curve_val, 5);
 				for (i = 0; i < 65; i++)
-					dnlp_scurv_mid2[i] = curve_val[i];
+					dnlp_scurv_mid2_copy[i] = curve_val[i];
 			} else {
-				if (kstrtoul(parm[2], 10, &val) < 0) {
-					kfree(buf_orig);
-					kfree(stemp);
-					return -EINVAL;
-				}
+				if (kstrtoul(parm[2], 10, &val) < 0)
+					goto free_buf;
+
 				num = val;
-				if (kstrtoul(parm[3], 10, &val) < 0) {
-					kfree(stemp);
-					kfree(buf_orig);
-					return -EINVAL;
-				}
+				if (kstrtoul(parm[3], 10, &val) < 0)
+					goto free_buf;
+
 				if (num > 64)
 					pr_info("error cmd\n");
 				else
-					dnlp_scurv_mid2[num] = val;
+					dnlp_scurv_mid2_copy[num] = val;
 			}
 		} else if (!strcmp(parm[1], "scurv_hgh1")) {
 			if (parm[2] == NULL) {
 				pr_info("error cmd\n");
-				kfree(stemp);
-				kfree(buf_orig);
-				return -EINVAL;
+				goto free_buf;
 			} else if (!strcmp(parm[2], "all")) {
 				str_sapr_to_d(parm[3], curve_val, 5);
 				for (i = 0; i < 65; i++)
-					dnlp_scurv_hgh1[i] = curve_val[i];
+					dnlp_scurv_hgh1_copy[i] = curve_val[i];
 			} else {
-				if (kstrtoul(parm[2], 10, &val) < 0) {
-					kfree(stemp);
-					kfree(buf_orig);
-					return -EINVAL;
-				}
+				if (kstrtoul(parm[2], 10, &val) < 0)
+					goto free_buf;
+
 				num = val;
-				if (kstrtoul(parm[3], 10, &val) < 0) {
-					kfree(stemp);
-					kfree(buf_orig);
-					return -EINVAL;
-				}
+				if (kstrtoul(parm[3], 10, &val) < 0)
+					goto free_buf;
+
 				if (num > 64)
 					pr_info("error cmd\n");
 				else
-					dnlp_scurv_hgh1[num] = val;
+					dnlp_scurv_hgh1_copy[num] = val;
 			}
 		} else if (!strcmp(parm[1], "scurv_hgh2")) {
 			if (parm[2] == NULL) {
 				pr_info("error cmd\n");
-				kfree(stemp);
-				kfree(buf_orig);
-				return -EINVAL;
+				goto free_buf;
 			} else if (!strcmp(parm[2], "all")) {
 				str_sapr_to_d(parm[3], curve_val, 5);
 				for (i = 0; i < 65; i++)
-					dnlp_scurv_hgh2[i] = curve_val[i];
+					dnlp_scurv_hgh2_copy[i] = curve_val[i];
 			} else {
-				if (kstrtoul(parm[2], 10, &val) < 0) {
-					kfree(stemp);
-					kfree(buf_orig);
-					return -EINVAL;
-				}
+				if (kstrtoul(parm[2], 10, &val) < 0)
+					goto free_buf;
+
 				num = val;
-				if (kstrtoul(parm[3], 10, &val) < 0) {
-					kfree(stemp);
-					kfree(buf_orig);
-					return -EINVAL;
-				}
+				if (kstrtoul(parm[3], 10, &val) < 0)
+					goto free_buf;
+
 				if (num > 64)
 					pr_info("error cmd\n");
 				else
-					dnlp_scurv_hgh2[num] = val;
+					dnlp_scurv_hgh2_copy[num] = val;
 			}
 		} else if (!strcmp(parm[1], "gain_var_lut49")) {
 			if (parm[2] == NULL) {
 				pr_info("error cmd\n");
-				kfree(stemp);
-				kfree(buf_orig);
-				return -EINVAL;
+				goto free_buf;
 			} else if (!strcmp(parm[2], "all")) {
 				str_sapr_to_d(parm[3], curve_val, 5);
 				for (i = 0; i < 49; i++)
-					gain_var_lut49[i] = curve_val[i];
+					gain_var_lut49_copy[i] = curve_val[i];
 			} else {
-				if (kstrtoul(parm[2], 10, &val) < 0) {
-					kfree(stemp);
-					kfree(buf_orig);
-					return -EINVAL;
-				}
+				if (kstrtoul(parm[2], 10, &val) < 0)
+					goto free_buf;
+
 				num = val;
-				if (kstrtoul(parm[3], 10, &val) < 0) {
-					kfree(stemp);
-					kfree(buf_orig);
-					return -EINVAL;
-				}
+				if (kstrtoul(parm[3], 10, &val) < 0)
+					goto free_buf;
+
 				if (num > 48)
 					pr_info("error cmd\n");
 				else
-					gain_var_lut49[num] = val;
+					gain_var_lut49_copy[num] = val;
 			}
 		} else if (!strcmp(parm[1], "wext_gain")) {
 			if (parm[2] == NULL) {
 				pr_info("error cmd\n");
-				kfree(stemp);
-				kfree(buf_orig);
-				return -EINVAL;
+				goto free_buf;
 			} else if (!strcmp(parm[2], "all")) {
 				str_sapr_to_d(parm[3], curve_val, 5);
 				for (i = 0; i < 48; i++)
-					wext_gain[i] = curve_val[i];
+					wext_gain_copy[i] = curve_val[i];
 			} else {
-				if (kstrtoul(parm[2], 10, &val) < 0) {
-					kfree(stemp);
-					kfree(buf_orig);
-					return -EINVAL;
-				}
+				if (kstrtoul(parm[2], 10, &val) < 0)
+					goto free_buf;
+
 				num = val;
-				if (kstrtoul(parm[3], 10, &val) < 0) {
-					kfree(stemp);
-					kfree(buf_orig);
-					return -EINVAL;
-				}
+				if (kstrtoul(parm[3], 10, &val) < 0)
+					goto free_buf;
+
 				if (num > 47)
 					pr_info("error cmd\n");
 				else
-					wext_gain[num] = val;
+					wext_gain_copy[num] = val;
 			}
 		}
 	} else if (!strcmp(parm[0], "ro")) {
 		if (!strcmp(parm[1], "luma_avg4"))
-			pr_info("%d\n", ro_luma_avg4);
+			pr_info("%d\n", *ro_luma_avg4_copy);
 		else if (!strcmp(parm[1], "var_d8"))
-			pr_info("%d\n", ro_var_d8);
+			pr_info("%d\n", *ro_var_d8_copy);
 		else if (!strcmp(parm[1], "scurv_gain"))
-			pr_info("%d\n", ro_scurv_gain);
+			pr_info("%d\n", *ro_scurv_gain_copy);
 		else if (!strcmp(parm[1], "blk_wht_ext0"))
-			pr_info("%d\n", ro_blk_wht_ext0);
+			pr_info("%d\n", *ro_blk_wht_ext0_copy);
 		else if (!strcmp(parm[1], "blk_wht_ext1"))
-			pr_info("%d\n", ro_blk_wht_ext1);
+			pr_info("%d\n", *ro_blk_wht_ext1_copy);
 		else if (!strcmp(parm[1], "dnlp_brightness"))
-			pr_info("%d\n", ro_dnlp_brightness);
+			pr_info("%d\n", *ro_dnlp_brightness_copy);
 		else
 			pr_info("error cmd\n");
+	} else if (!strcmp(parm[0], "dnlp_print")) {
+		if (kstrtoul(parm[1], 16, &val) < 0)
+			goto free_buf;
+
+		*dnlp_printk_copy = val;
+		pr_info("dnlp_print = %x\n", *dnlp_printk_copy);
 	}
+
 	kfree(buf_orig);
 	kfree(stemp);
 	return count;
+
+free_buf:
+	kfree(buf_orig);
+	kfree(stemp);
+	return -EINVAL;
 }
 
 static ssize_t amvecm_brightness_show(struct class *cla,
@@ -1891,77 +2073,13 @@ static ssize_t amvecm_saturation_hue_store(struct class *cla,
 {
 	size_t r;
 	s32 mab = 0;
-	s16 mc = 0, md = 0;
-	s16 ma, mb;
 
 	r = sscanf(buf, "0x%x", &mab);
 	if ((r != 1) || (mab&0xfc00fc00))
 		return -EINVAL;
-	ma = (s16)((mab << 6) >> 22);
-	mb = (s16)((mab << 22) >> 22);
-
-	saturation_ma = ma - 0x100;
-	saturation_mb = mb;
-
-	ma += saturation_ma_shift;
-	mb += saturation_mb_shift;
-	if (ma > 511)
-		ma = 511;
-	if (ma < -512)
-		ma = -512;
-	if (mb > 511)
-		mb = 511;
-	if (mb < -512)
-		mb = -512;
-	mab =  ((ma & 0x3ff) << 16) | (mb & 0x3ff);
-	WRITE_VPP_REG(VPP_VADJ1_MA_MB, mab);
-	mc = (s16)((mab<<22)>>22); /* mc = -mb */
-	mc = 0 - mc;
-	if (mc > 511)
-		mc = 511;
-	if (mc <  -512)
-		mc = -512;
-	md = (s16)((mab<<6)>>22);  /* md =  ma; */
-	mab = ((mc&0x3ff)<<16)|(md&0x3ff);
-	WRITE_VPP_REG(VPP_VADJ1_MC_MD, mab);
-	WRITE_VPP_REG_BITS(VPP_VADJ_CTRL, 1, 0, 1);
-	pr_amvecm_dbg("%s set video_saturation_hue OK!!!\n", __func__);
+	amvecm_set_saturation_hue(mab);
 	return count;
-}
 
-static int parse_para_pq(const char *para, int para_num, int *result)
-{
-	char *token = NULL;
-	char *params, *params_base;
-	int *out = result;
-	int len = 0, count = 0;
-	int res = 0;
-
-	if (!para)
-		return 0;
-
-	params = kstrdup(para, GFP_KERNEL);
-	params_base = params;
-	token = params;
-	len = strlen(token);
-	do {
-		token = strsep(&params, " ");
-		while (token && (isspace(*token)
-				|| !isgraph(*token)) && len) {
-			token++;
-			len--;
-		}
-		if (len == 0)
-			break;
-		if (!token || kstrtoint(token, 0, &res) < 0)
-			break;
-		len = strlen(token);
-		*out++ = res;
-		count++;
-	} while ((token) && (count < para_num) && (len > 0));
-
-	kfree(params_base);
-	return count;
 }
 
 void vpp_vd_adj1_saturation_hue(signed int sat_val,
@@ -2053,58 +2171,17 @@ static ssize_t amvecm_saturation_hue_post_store(struct class *cla,
 		struct class_attribute *attr, const char *buf, size_t count)
 {
 	int parsed[2];
-	int i, ma, mb, mab, mc, md;
-	int hue_cos[] = {
-		/*0~12*/
-		256, 256, 256, 255, 255, 254, 253, 252, 251, 250,
-		248, 247, 245, 243, 241, 239, 237, 234, 231, 229,
-		226, 223, 220, 216, 213, 209  /*13~25*/
-	};
-	int hue_sin[] = {
-		-147, -142, -137, -132, -126, -121, -115, -109, -104,
-		-98, -92, -86, -80, /*-25~-13*/-74,  -68,  -62,  -56,
-		-50,  -44,  -38,  -31,  -25, -19, -13,  -6, /*-12~-1*/
-		0, /*0*/
-		6,   13,   19,	25,   31,   38,   44,	50,   56,
-		62,	68,  74,      /*1~12*/	80,   86,   92,	98,  104,
-		109,  115,  121,  126,  132, 137, 142, 147 /*13~25*/
-	};
+
 	if (likely(parse_para_pq(buf, 2, parsed) != 2))
 		return -EINVAL;
-
 	if ((parsed[0] < -128) ||
 		(parsed[0] > 128) ||
 		(parsed[1] < -25) ||
-		(parsed[1] > 25)) {
+		(parsed[1] > 25))
 		return -EINVAL;
-	}
-	saturation_post = parsed[0];
-	hue_post = parsed[1];
-	i = (hue_post > 0) ? hue_post : -hue_post;
-	ma = (hue_cos[i]*(saturation_post + 128)) >> 7;
-	mb = (hue_sin[25+hue_post]*(saturation_post + 128)) >> 7;
-	if (ma > 511)
-		ma = 511;
-	if (ma < -512)
-		ma = -512;
-	if (mb > 511)
-		mb = 511;
-	if (mb < -512)
-		mb = -512;
-	mab =  ((ma & 0x3ff) << 16) | (mb & 0x3ff);
-	pr_info("\n[amvideo..] saturation_post:%d hue_post:%d mab:%x\n",
-			saturation_post, hue_post, mab);
-	WRITE_VPP_REG(VPP_VADJ2_MA_MB, mab);
-	mc = (s16)((mab<<22)>>22); /* mc = -mb */
-	mc = 0 - mc;
-	if (mc > 511)
-		mc = 511;
-	if (mc < -512)
-		mc = -512;
-	md = (s16)((mab<<6)>>22);  /* md =	ma; */
-	mab = ((mc&0x3ff)<<16)|(md&0x3ff);
-	WRITE_VPP_REG(VPP_VADJ2_MC_MD, mab);
-	WRITE_VPP_REG_BITS(VPP_VADJ_CTRL, 1, 2, 1);
+	amvecm_set_saturation_hue_post(parsed[0],
+		parsed[1]);
+
 	return count;
 }
 
@@ -2838,7 +2915,7 @@ static ssize_t amvecm_post_matrix_pos_store(struct class *cla,
 	int val;
 
 	r = sscanf(buf, "0x%x", &val);
-	if ((r != 1)  || (val & 0xf000f000))
+	if ((r != 1)  || (val & 0xe000e000))
 		return -EINVAL;
 
 	WRITE_VPP_REG(VPP_MATRIX_PROBE_POS, val);
@@ -2854,8 +2931,10 @@ static ssize_t amvecm_post_matrix_data_show(struct class *cla,
 /* #if (MESON_CPU_TYPE >= MESON_CPU_TYPE_MESONG9TV) */
 	val2 = READ_VPP_REG(VPP_MATRIX_PROBE_COLOR1);
 /* #endif */
-	len += sprintf(buf+len, "VPP_MATRIX_PROBE_COLOR %x\n", val1);
-	len += sprintf(buf+len, "VPP_MATRIX_PROBE_COLOR %x\n", val2);
+	len += sprintf(buf+len,
+		"VPP_MATRIX_PROBE_COLOR %x, %x, %x\n",
+		((val2 & 0xf) << 8) | ((val1 >> 24) & 0xff),
+		(val1 >> 12) & 0xfff, val1 & 0xfff);
 	return len;
 }
 
@@ -3484,6 +3563,32 @@ static ssize_t amvecm_pq_user_store(struct class *cla,
 	return count;
 }
 
+static const char *dnlp_insmod_debug_usage_str = {
+	"usage: echo 1 > /sys/class/amvecm/dnlp_insmod\n"
+};
+
+static ssize_t amvecm_dnlp_insmod_show(struct class *cla,
+			struct class_attribute *attr, char *buf)
+{
+	return sprintf(buf, "%s\n", dnlp_insmod_debug_usage_str);
+}
+
+static ssize_t amvecm_dnlp_insmod_store(struct class *cla,
+			struct class_attribute *attr,
+			const char *buf, size_t count)
+{
+	size_t r;
+	int val;
+
+	r = sscanf(buf, "%x\n", &val);
+	if ((r != 1))
+		return -EINVAL;
+
+	if (val == 1)
+		dnlp_alg_param_init();
+
+	return count;
+}
 
 static ssize_t amvecm_vpp_demo_show(struct class *cla,
 			struct class_attribute *attr, char *buf)
@@ -3952,6 +4057,215 @@ static void vpp_clip_config(unsigned int mode_sel, unsigned int color,
 	}
 	WRITE_VPP_REG(addr_cliptop, value_cliptop);
 	WRITE_VPP_REG(addr_clipbot, value_clipbot);
+}
+
+#define color_mode_idx 7
+
+static int cm2_hue_array[color_mode_idx][2];
+static int cm2_luma_array[color_mode_idx][2];
+static int cm2_sat_array[color_mode_idx][2];
+static int cm2_hue_by_hs_array[color_mode_idx][2];
+
+static ssize_t amvecm_cm2_hue_show(struct class *cla,
+		struct class_attribute *attr, char *buf)
+{
+	int i;
+	int pos = 0;
+
+	for (i = 0; i < color_mode_idx; i++)
+		pos += sprintf(buf + pos, "%d %d %d\n", i,
+			cm2_hue_array[i][0], cm2_hue_array[i][1]);
+	return pos;
+}
+static ssize_t amvecm_cm2_hue_store(struct class *cla,
+		struct class_attribute *attr,
+		const char *buf, size_t count)
+{
+	char *buf_orig, *parm[8] = {NULL};
+	long val = 0;
+	unsigned int color_mode;
+
+	if (!buf)
+		return count;
+	buf_orig = kstrdup(buf, GFP_KERNEL);
+	if (!buf_orig)
+		return -ENOMEM;
+	parse_param_amvecm(buf_orig, (char **)&parm);
+	if (!strncmp(parm[0], "cm2_hue", 7)) {
+		if (kstrtoul(parm[1], 10, &val) < 0)
+			goto kfree_buf;
+
+		color_mode = val;
+		if (kstrtol(parm[2], 10, &val) < 0)
+			goto kfree_buf;
+
+		cm2_hue_array[color_mode][0] = val;
+		if (kstrtoul(parm[3], 10, &val) < 0)
+			goto kfree_buf;
+
+		cm2_hue_array[color_mode][1] = val;
+		cm2_hue(color_mode, cm2_hue_array[color_mode][0],
+		    cm2_hue_array[color_mode][1]);
+		pr_info("cm2_hue ok\n");
+	}
+	kfree(buf_orig);
+	return count;
+
+kfree_buf:
+	kfree(buf_orig);
+	return -EINVAL;
+}
+
+static ssize_t amvecm_cm2_luma_show(struct class *cla,
+		struct class_attribute *attr, char *buf)
+{
+	int i;
+	int pos = 0;
+
+	for (i = 0; i < color_mode_idx; i++)
+		pos += sprintf(buf + pos, "%d %d %d\n", i,
+			cm2_luma_array[i][0], cm2_luma_array[i][1]);
+	return pos;
+}
+static ssize_t amvecm_cm2_luma_store(struct class *cla,
+		struct class_attribute *attr,
+		const char *buf, size_t count)
+{
+	char *buf_orig, *parm[8] = {NULL};
+	long val = 0;
+	unsigned int color_mode;
+
+	if (!buf)
+		return count;
+	buf_orig = kstrdup(buf, GFP_KERNEL);
+	if (!buf_orig)
+		return -ENOMEM;
+	parse_param_amvecm(buf_orig, (char **)&parm);
+	if (!strncmp(parm[0], "cm2_luma", 7)) {
+		if (kstrtoul(parm[1], 10, &val) < 0)
+			goto kfree_buf;
+
+		color_mode = val;
+		if (kstrtol(parm[2], 10, &val) < 0)
+			goto kfree_buf;
+
+		cm2_luma_array[color_mode][0] = val;
+		if (kstrtoul(parm[3], 10, &val) < 0)
+			goto kfree_buf;
+
+		cm2_luma_array[color_mode][1] = val;
+		cm2_hue(color_mode, cm2_luma_array[color_mode][0],
+		    cm2_luma_array[color_mode][1]);
+		pr_info("cm2_luma ok\n");
+	}
+	kfree(buf_orig);
+	return count;
+
+kfree_buf:
+	kfree(buf_orig);
+	return -EINVAL;
+}
+
+static ssize_t amvecm_cm2_sat_show(struct class *cla,
+		struct class_attribute *attr, char *buf)
+{
+	int i;
+	int pos = 0;
+
+	for (i = 0; i < color_mode_idx; i++)
+		pos += sprintf(buf + pos, "%d %d %d\n", i,
+			cm2_sat_array[i][0], cm2_sat_array[i][1]);
+	return pos;
+}
+static ssize_t amvecm_cm2_sat_store(struct class *cla,
+		struct class_attribute *attr,
+		const char *buf, size_t count)
+{
+	char *buf_orig, *parm[8] = {NULL};
+	long val = 0;
+	unsigned int color_mode;
+
+	if (!buf)
+		return count;
+	buf_orig = kstrdup(buf, GFP_KERNEL);
+	if (!buf_orig)
+		return -ENOMEM;
+	parse_param_amvecm(buf_orig, (char **)&parm);
+	if (!strncmp(parm[0], "cm2_sat", 7)) {
+		if (kstrtoul(parm[1], 10, &val) < 0)
+			goto kfree_buf;
+
+		color_mode = val;
+		if (kstrtol(parm[2], 10, &val) < 0)
+			goto kfree_buf;
+
+		cm2_sat_array[color_mode][0] = val;
+		if (kstrtoul(parm[3], 10, &val) < 0)
+			goto kfree_buf;
+
+		cm2_sat_array[color_mode][1] = val;
+		cm2_hue(color_mode, cm2_sat_array[color_mode][0],
+		    cm2_sat_array[color_mode][1]);
+		pr_info("cm2_sat ok\n");
+	}
+	kfree(buf_orig);
+	return count;
+
+kfree_buf:
+	kfree(buf_orig);
+	return -EINVAL;
+
+}
+
+static ssize_t amvecm_cm2_hue_by_hs_show(struct class *cla,
+		struct class_attribute *attr, char *buf)
+{
+	int i;
+	int pos = 0;
+
+	for (i = 0; i < color_mode_idx; i++)
+		pos += sprintf(buf + pos, "%d %d %d\n", i,
+			cm2_hue_by_hs_array[i][0], cm2_hue_by_hs_array[i][1]);
+	return pos;
+
+}
+static ssize_t amvecm_cm2_hue_by_hs_store(struct class *cla,
+		struct class_attribute *attr,
+		const char *buf, size_t count)
+{
+	char *buf_orig, *parm[8] = {NULL};
+	long val = 0;
+	unsigned int color_mode;
+
+	if (!buf)
+		return count;
+	buf_orig = kstrdup(buf, GFP_KERNEL);
+	if (!buf_orig)
+		return -ENOMEM;
+	parse_param_amvecm(buf_orig, (char **)&parm);
+	if (!strncmp(parm[0], "cm2_hue_by_hs", 7)) {
+		if (kstrtoul(parm[1], 10, &val) < 0)
+			goto kfree_buf;
+
+		color_mode = val;
+		if (kstrtol(parm[2], 10, &val) < 0)
+			goto kfree_buf;
+
+		cm2_hue_by_hs_array[color_mode][0] = val;
+		if (kstrtoul(parm[3], 10, &val) < 0)
+			goto kfree_buf;
+
+		cm2_hue_by_hs_array[color_mode][1] = val;
+		cm2_hue(color_mode, cm2_hue_by_hs_array[color_mode][0],
+		    cm2_hue_by_hs_array[color_mode][1]);
+		pr_info("cm2_hue_by_hs ok\n");
+	}
+	kfree(buf_orig);
+	return count;
+
+kfree_buf:
+	kfree(buf_orig);
+	return -EINVAL;
 }
 
 static const char *amvecm_debug_usage_str = {
@@ -4569,6 +4883,18 @@ static struct class_attribute amvecm_class_attrs[] = {
 	__ATTR(dnlp_debug, 0644,
 		amvecm_dnlp_debug_show,
 		amvecm_dnlp_debug_store),
+	__ATTR(cm2_hue, 0644,
+		amvecm_cm2_hue_show,
+		amvecm_cm2_hue_store),
+	__ATTR(cm2_luma, 0644,
+		amvecm_cm2_luma_show,
+		amvecm_cm2_luma_store),
+	__ATTR(cm2_sat, 0644,
+		amvecm_cm2_sat_show,
+		amvecm_cm2_sat_store),
+	__ATTR(cm2_hue_by_hs, 0644,
+		amvecm_cm2_hue_by_hs_show,
+		amvecm_cm2_hue_by_hs_store),
 	__ATTR(brightness, 0644,
 		amvecm_brightness_show, amvecm_brightness_store),
 	__ATTR(contrast, 0644,
@@ -4646,6 +4972,8 @@ static struct class_attribute amvecm_class_attrs[] = {
 		amvecm_write_reg_show, amvecm_write_reg_store),
 	__ATTR(get_hdr_type, 0644,
 		amvecm_get_hdr_type_show, amvecm_get_hdr_type_store),
+	__ATTR(dnlp_insmod, 0644,
+		amvecm_dnlp_insmod_show, amvecm_dnlp_insmod_store),
 	__ATTR_NULL
 };
 
@@ -4816,6 +5144,7 @@ static int aml_vecm_probe(struct platform_device *pdev)
 		/*post matrix 12bit yuv2rgb*/
 		/* mtx_sel_dbg |= 1 << VPP_MATRIX_2; */
 		/* amvecm_vpp_mtx_debug(mtx_sel_dbg, 1);*/
+		WRITE_VPP_REG(VPP_MATRIX_PROBE_POS, 0x1fff1fff);
 	} else if (is_meson_txhd_cpu())
 		vpp_set_10bit_datapath1();
 	else if (is_meson_g12a_cpu() || is_meson_g12b_cpu())
@@ -4835,19 +5164,7 @@ static int aml_vecm_probe(struct platform_device *pdev)
 	/*config vlock mode*/
 	/*todo:txlx & g9tv support auto pll,*/
 	/*but support not good,need vlsi support optimize*/
-	if (is_meson_txhd_cpu())
-		vlock_mode = VLOCK_MODE_MANUAL_PLL;
-	else if (is_meson_txlx_cpu() && !is_meson_txlx_package_962E()) {
-		struct vinfo_s *vinfo = get_current_vinfo();
-
-		if ((vinfo->fr_adj_type != VOUT_FR_ADJ_HDMI) &&
-			(vinfo->width <= 1920))
-			vlock_mode = VLOCK_MODE_MANUAL_SOFT_ENC;
-		else
-			vlock_mode = VLOCK_MODE_MANUAL_PLL;
-
-	} else
-		vlock_mode = VLOCK_MODE_MANUAL_PLL;
+	vlock_mode = VLOCK_MODE_MANUAL_PLL;
 	if (is_meson_gxtvbb_cpu() ||
 		is_meson_txl_cpu() || is_meson_txlx_cpu()
 		|| is_meson_txhd_cpu())

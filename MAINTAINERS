@@ -13437,6 +13437,12 @@ AMLOGIC MAILBOX DRIVER
 M:      Yun Cai <yun.cai@amlogic.com>
 F:      drivers/amlogic/mailbox/
 
+AMLOGIC DUMMY BATTERY DRIVER
+M:      Shuide <shuide.chen@amlogic.com>
+F:      drivers/amlogic/battery/
+F:      drivers/amlogic/battery/amlogic_battery.c
+F:      drivers/amlogic/battery/amlogic_charger.c
+
 AMLOGIC REGISTER DEBUG DRIVER
 M:      Yun Cai <yun.cai@amlogic.com>
 F:	drivers/amlogic/reg_access/
@@ -13496,7 +13502,15 @@ F: drivers/amlogic/thermal/*
 
 M: Tao Zeng <tao.zeng@amlogic.com>
 F: drivers/amlogic/ddr_tool/*
-F: drivers/amlogic/ddr_tool/ddr_band_port_desc.c
+F: drivers/amlogic/ddr_tool/ddr_port_desc.c
+
+AMLOGIC driver for dmc protection
+M: Tao Zeng <tao.zeng@amlogic.com>
+F: drivers/amlogic/ddr_tool/dmc_g12.c
+F: drivers/amlogic/ddr_tool/dmc_gx.c
+F: drivers/amlogic/ddr_tool/dmc_monitor.c
+F: include/linux/amlogic/dmc_monitor.h
+F: include/linux/amlogic/ddr_port.h
 
 AMLOGIC driver for cpufreq
 M: Tao Zeng <tao.zeng@amlogic.com>
@@ -13524,8 +13538,8 @@ M: Tao Zeng <tao.zeng@amlogic.com>
 F: arch/arm/mach-meson/Makefile.boot
 
 HDMITX OUTPUT DRIVER
-M:      Yi Zhou <yi.zhou@amlogic.com>
-M:	Zongdong Jiao <zongdong.jiao@amlogic.com>
+M:      Zongdong Jiao <zongdong.jiao@amlogic.com>
+M:	Yi Zhou <yi.zhou@amlogic.com>
 M:	Kaifu Hu <kaifu.hu@amlogic.com>
 S:	Maintained
 F:	drivers/amlogic/media/vout/hdmitx/*
@@ -13671,9 +13685,17 @@ F:	drivers/amlogic/mtd/
 M:	Yonghui Yu <yonghui.yu@amlogic.com>
 F:	drivers/amlogic/mtd/boot.c
 
+AMLOGIC SPIFC DRIVER
+M:	Yi Zeng <yi.zeng@amlogic.com>
+F:	driver/amlogic/spi-nor/
+F:	driver/amlogic/spi-nor/aml-spifc.c
+F:	driver/amlogic/spi-nor/Kconfig
+F:	driver/amlogic/spi-nor/Makefile
+
 AMLOGIC GPU DEVICETREE
 M:	Jiyu Yang <jiyu.yang@amlogic.com>
 F:	arch/arm64/boot/dts/amlogic/mesongxtvbb-gpu-t83x.dtsi
+F:	arch/arm64/boot/dts/amlogic/mesong12a-bifrost.dtsi
 
 AMLOGIC GPU SYSTRACE
 M:	Binqi Zhang <binqi.zhang@amlogic.com>
@@ -13815,6 +13837,7 @@ F: drivers/amlogic/pm/*
 
 AMLOGIC WATCHDOG DRIVER SUPPORT
 M:	Bo Yang <bo.yang@amlogic.com>
+F:	Documentation/devicetree/bindings/amlogic/meson-wdt.txt
 F:	drivers/amlogic/watchdog/*
 
 AMLOGIC LED DRIVER SUPPORT
@@ -13888,6 +13911,7 @@ M:	Mingliang Dong <mingliang.dong@amlogic.com>
 F:	drivers/amlogic/media/enhancement/amvecm/*
 F:	drivers/amlogic/media/enhancement/amvecm/dolby_vision/*
 F:	drivers/amlogic/media/enhancement/amvecm/arch/*
+F:	drivers/amlogic/media/enhancement/amvecm/dnlp_algorithm/*
 F:	include/linux/amlogic/media/amvecm/*
 
 AMLOGIC GXL ADD SKT DTS
@@ -14367,7 +14391,7 @@ F: sound/soc/codecs/amlogic/ad82584f.h
 
 AMLOGIC CPUFREQS DRIVER
 M:	hong guo <hong.guo@amlogic.com>
-F:	drivers/cpufreq/meson-cpufreq.c
+F:	drivers/amlogic/cpufreq/meson-cpufreq.c
 F:	drivers/amlogic/clk/clk-cpu-fclk-composite.c
 
 AMLOGIC Irblaster driver
@@ -14483,6 +14507,14 @@ AMLOGIC TXLX T962E R321 buildroot dts
 M:     liangzhuo.xie <liangzhuo.xie@amlogic.com>
 F:     arch/arm64/boot/dts/amlogic/txlx_t962e_r321_buildroot.dts
 
+AMLOGIC G12A X2 U212 buildroot dts
+M:     liangzhuo.xie <shuide.chen@amlogic.com>
+F:     arch/arm64/boot/dts/amlogic/g12a_s905x2_u212_1g.dts
+
+AMLOGIC BACKLIGHT LOCAL DIMMING
+M:      evoke.zhang <evoke.zhang@amlogic.com>
+F:      drivers/amlogic/media/vout/backlight/aml_ldim/iw7027_bl.h
+
 AMLOGIC G12B
 M: Yan Wang <yan.wang@amlogic.com>
 F: arch/arm64/boot/dts/amlogic/mesong12b.dtsi
@@ -14508,3 +14540,86 @@ F:	arch/arm64/boot/dts/amlogic/mesong12b_skt-panel.dtsi
 AMLOGIC G12B w400 buildroot dts
 M: 	liangzhuo xie <liangzhuo.xie@amlogic.com>
 F:      arch/arm64/boot/dts/amlogic/g12b_a311d_w400_buildroot.dts
+
+AMLOGIC P PARTITION DTSI
+M: Xindong Xu <xindong.xu@amlogic.com>
+F: arch/arm64/boot/dts/amlogic/firmware_avb.dtsi
+F: arch/arm64/boot/dts/amlogic/firmware_normal.dtsi
+F: arch/arm64/boot/dts/amlogic/partition_mbox_normal_P_32.dtsi
+F: arch/arm64/boot/dts/amlogic/partition_mbox_normal_P_64.dtsi
+F: arch/arm64/boot/dts/amlogic/partition_mbox_p241_P.dtsi
+
+AMLOGIC TXL CLOCK
+M:	Jian Hu <jian.hu@amlogic.com>
+F:	include/dt-bindings/clock/amlogic,txl-clkc.h
+F:	drivers/amlogic/clk/txl/*
+
+AMLOGIC TXL PINCTRL DRIVER
+M:	Xingyu Chen <xingyu.chen@amlogic.com>
+F:	drivers/amlogic/pinctrl/pinctrl-meson-txl.c
+F:	include/dt-bindings/gpio/meson-txl-gpio.h
+
+AMLOGIC TXL PANEL DRIVER
+M:	evoke zhang <evoke.zhang@amlogic.com>
+F:	arch/arm64/boot/dts/amlogic/mesontxl_p321-panel.dtsi
+
+AMLOGIC REBOOT
+M:	Jian Hu <jian.hu@amlogic.com>
+F:	Documentation/devicetree/bindings/amlogic/reboot-meson.txt
+
+AMLOGIC PARTITION DTSI
+M: Jiaming Huang <jiaming.huang@amlogic.com>
+F: arch/arm64/boot/dts/amlogic/partition_tv_4G.dtsi
+
+AMLOGIC LCD BACKLIGHT LDIM
+M:      evoke zhang <evoke.zhang@amlogic.com>
+F:      drivers/amlogic/media/algorithm/*
+F:      drivers/amlogic/media/vout/backlight/aml_ldim/ldim_func.h
+
+AMLOGIC AVIN DETECT DRIVER
+M:	Xingyu Chen <xingyu.chen@amlogic.com>
+F:	drivers/amlogic/input/avin_detect/*
+
+AMLOGIC DTS
+M:	Xindong Xu <xindong.xu@amlogic.com>
+F:	arch/arm64/boot/dts/amlogic/atom.dts
+F:	arch/arm64/boot/dts/amlogic/gxl_sei210_1g.dts
+F:	arch/arm64/boot/dts/amlogic/gxl_sei210_2g.dts
+F:	arch/arm64/boot/dts/amlogic/mesongxl_sei210.dtsi
+F:	arch/arm64/boot/dts/amlogic/partition_mbox_normal_P_32_atom.dtsi
+F:	arch/arm64/boot/dts/amlogic/partition_mbox_normal_P_32_sei.dtsi
+F:	arch/arm64/boot/dts/amlogic/partition_mbox_normal_sei32bit.dtsi
+
+AMLOGIC ADD CS42528 CODEC DRIVER
+M: Ivan Nie <ivan.nie@amlogic.com>
+F: Documentation/devicetree/bindings/sound/cs42528.txt
+F: sound/soc/codecs/amlogic/cs42528.c
+F: sound/soc/codecs/amlogic/cs42528.h
+
+AMLOGIC SPIDEV
+M:    Ivan Nie <Ivan.nie@amlogic.com>
+F:    Documentation/devicetree/bindings/spi/spidev.txt
+
+AMLOGIC SOUND ADC3101
+M: Renjun Xu <renjun.xu@amlogic.com>
+F: Documentation/devicetree/bindings/amlogic/axg-sound-adc3010-d608mic-pcm.txt
+
+AMLOGIC LCD EXTERN DRIVER
+M:      evoke zhang <evoke.zhang@amlogic.com>
+F:      drivers/amlogic/media/vout/lcd/lcd_extern/ext_i2c_dev.c
+
+AMLOGIC SYSTEM AS ROOT
+M:	Xindong Xu  <xindong.xu@amlogic.com>
+F:	arch/arm64/boot/dts/amlogic/firmware_avb_system.dtsi
+F:      arch/arm64/boot/dts/amlogic/firmware_system.dtsi
+
+
+AMLOGIC SYSTEM AS ROOT
+M:	Renjun Xu  <renjun.xu@amlogic.com>
+F:	arch/arm64/boot/dts/amlogic/axg_s400_v03gva.dts
+F:	arch/arm64/boot/dts/amlogic/axg_s420_v03gva.dts
+F:	Documentation/devicetree/bindings/input/cy8c4014_i2c.txt
+F:	drivers/amlogic/input/sensor/cy8c4014.c
+F:	Documentation/devicetree/bindings/amlogic/input/pca9557_keypad.txt
+F:	drivers/amlogic/input/keyboard/pca9557_keypad.c
+F:	Documentation/devicetree/bindings/is31fl3236a.txt

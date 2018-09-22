@@ -861,7 +861,9 @@ static int meson_sar_adc_init(struct iio_dev *indio_dev)
 			MESON_SAR_ADC_REG0_ADC_TEMP_SEN_SEL);
 
 	/* disable all channels by default */
-	regmap_write(priv->regmap, MESON_SAR_ADC_CHAN_LIST, 0x0);
+	ret = regmap_write(priv->regmap, MESON_SAR_ADC_CHAN_LIST, 0x0);
+	if (ret)
+		return ret;
 
 	regmap_update_bits(priv->regmap, MESON_SAR_ADC_REG3,
 			   MESON_SAR_ADC_REG3_CTRL_SAMPLING_CLOCK_PHASE, 0);
@@ -1186,6 +1188,8 @@ static int meson_sar_adc_buffer_postenable(struct iio_dev *indio_dev)
 		idx++;
 	}
 
+	if (!idx)
+		return -EINVAL;
 	priv->active_channel_cnt = idx;
 
 	/*
@@ -1325,6 +1329,17 @@ struct meson_sar_adc_data meson_sar_adc_axg_data = {
 	},
 };
 
+struct meson_sar_adc_data meson_sar_adc_txl_data = {
+	.obt_temp_chan6 = false,
+	.has_bl30_integration = true,
+	.vref_sel = CALIB_VOL_AS_VREF,
+	.resolution = SAR_ADC_12BIT,
+	.name = "meson-txl-saradc",
+	.regs_diff = {
+		.reg3_ring_counter_disable = BIT_HIGH,
+	},
+};
+
 struct meson_sar_adc_data meson_sar_adc_gxl_data = {
 	.obt_temp_chan6 = false,
 	.has_bl30_integration = true,
@@ -1369,6 +1384,9 @@ static const struct of_device_id meson_sar_adc_of_match[] = {
 		.compatible = "amlogic,meson-axg-saradc",
 		.data = &meson_sar_adc_axg_data,
 	}, {
+		.compatible = "amlogic,meson-txl-saradc",
+		.data = &meson_sar_adc_txl_data,
+	}, {
 		.compatible = "amlogic,meson-gxl-saradc",
 		.data = &meson_sar_adc_gxl_data,
 	}, {
@@ -1400,8 +1418,10 @@ static int meson_sar_adc_probe(struct platform_device *pdev)
 
 	priv = iio_priv(indio_dev);
 	match = of_match_device(meson_sar_adc_of_match, &pdev->dev);
-	priv->data = match->data;
+	if (!match)
+		return -EINVAL;
 
+	priv->data = match->data;
 	indio_dev->name = priv->data->name;
 	indio_dev->dev.parent = &pdev->dev;
 	indio_dev->dev.of_node = pdev->dev.of_node;
@@ -1567,12 +1587,18 @@ static int __maybe_unused meson_sar_adc_resume(struct device *dev)
 	return 0;
 }
 
+static void meson_sar_adc_shutdown(struct platform_device *pdev)
+{
+	meson_sar_adc_suspend(&pdev->dev);
+}
+
 static SIMPLE_DEV_PM_OPS(meson_sar_adc_pm_ops,
 			 meson_sar_adc_suspend, meson_sar_adc_resume);
 
 static struct platform_driver meson_sar_adc_driver = {
 	.probe		= meson_sar_adc_probe,
 	.remove		= meson_sar_adc_remove,
+	.shutdown	= meson_sar_adc_shutdown,
 	.driver		= {
 		.name	= "meson-saradc",
 		.of_match_table = meson_sar_adc_of_match,

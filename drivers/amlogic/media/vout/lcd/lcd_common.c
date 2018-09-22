@@ -259,7 +259,7 @@ unsigned int lcd_cpu_gpio_get(unsigned int index)
 	return gpiod_get_value(cpu_gpio->gpio);
 }
 
-const char *lcd_ttl_pinmux_str[] = {
+static char *lcd_ttl_pinmux_str[] = {
 	"ttl_6bit_hvsync_on",      /* 0 */
 	"ttl_6bit_de_on",          /* 1 */
 	"ttl_6bit_hvsync_de_on",   /* 2 */
@@ -274,93 +274,91 @@ void lcd_ttl_pinmux_set(int status)
 {
 	struct aml_lcd_drv_s *lcd_drv = aml_lcd_get_driver();
 	struct lcd_config_s *pconf;
-	unsigned int index, num;
+	unsigned int base, index;
 
 	if (lcd_debug_print_flag)
 		LCDPR("%s: %d\n", __func__, status);
 
 	pconf = lcd_drv->lcd_config;
 	if (pconf->lcd_basic.lcd_bits == 6)
-		index = 0;
+		base = 0;
 	else
-		index = 4;
+		base = 4;
 
 	if (status) {
-		if (pconf->pinmux_flag == 0) {
-			pconf->pinmux_flag = 1;
-			switch (pconf->lcd_control.ttl_config->sync_valid) {
-			case 1: /* hvsync */
-				num = index + 0;
-				break;
-			case 2: /* DE */
-				num = index + 1;
-				break;
-			default:
-			case 3: /* DE + hvsync */
-				num = index + 2;
-				break;
-			}
-		} else {
-			LCDPR("ttl pinmux is already selected\n");
-			return;
+		switch (pconf->lcd_control.ttl_config->sync_valid) {
+		case 1: /* hvsync */
+			index = base + 0;
+			break;
+		case 2: /* DE */
+			index = base + 1;
+			break;
+		default:
+		case 3: /* DE + hvsync */
+			index = base + 2;
+			break;
 		}
 	} else {
-		if (pconf->pinmux_flag) {
-			pconf->pinmux_flag = 0;
-			num = index + 3;
-		} else {
-			LCDPR("ttl pinmux is already released\n");
-			return;
-		}
+		index = base + 3;
+	}
+
+	if (pconf->pinmux_flag == index) {
+		LCDPR("pinmux %s is already selected\n",
+			lcd_ttl_pinmux_str[index]);
+		return;
 	}
 
 	/* request pinmux */
 	pconf->pin = devm_pinctrl_get_select(lcd_drv->dev,
-		lcd_ttl_pinmux_str[num]);
+		lcd_ttl_pinmux_str[index]);
 	if (IS_ERR(pconf->pin))
-		LCDERR("set ttl pinmux error\n");
+		LCDERR("set ttl pinmux %s error\n", lcd_ttl_pinmux_str[index]);
+	else {
+		if (lcd_debug_print_flag) {
+			LCDPR("set ttl pinmux %s: %p\n",
+				lcd_ttl_pinmux_str[index], pconf->pin);
+		}
+	}
+	pconf->pinmux_flag = index;
 }
+
+static char *lcd_vbyone_pinmux_str[] = {
+	"vbyone",
+	"vbyone_off",
+	"none",
+};
 
 /* set VX1_LOCKN && VX1_HTPDN */
 void lcd_vbyone_pinmux_set(int status)
 {
 	struct aml_lcd_drv_s *lcd_drv = aml_lcd_get_driver();
 	struct lcd_config_s *pconf;
+	unsigned int index;
 
 	if (lcd_debug_print_flag)
 		LCDPR("%s: %d\n", __func__, status);
 
-#if 1
 	pconf = lcd_drv->lcd_config;
-	if (status) {
-		if (pconf->pinmux_flag == 0) {
-			pconf->pinmux_flag = 1;
-			/* request pinmux */
-			pconf->pin = devm_pinctrl_get_select(lcd_drv->dev,
-				"vbyone");
-			if (IS_ERR(pconf->pin))
-				LCDERR("set vbyone pinmux error\n");
-		} else {
-			LCDPR("vbyone pinmux is already selected\n");
-		}
+	index = (status) ? 0 : 1;
+
+	if (pconf->pinmux_flag == index) {
+		LCDPR("pinmux %s is already selected\n",
+			lcd_vbyone_pinmux_str[index]);
+		return;
+	}
+
+	pconf->pin = devm_pinctrl_get_select(lcd_drv->dev,
+		lcd_vbyone_pinmux_str[index]);
+	if (IS_ERR(pconf->pin)) {
+		LCDERR("set vbyone pinmux %s error\n",
+			lcd_vbyone_pinmux_str[index]);
 	} else {
-		if (pconf->pinmux_flag) {
-			pconf->pinmux_flag = 0;
-			/* release pinmux */
-			devm_pinctrl_put(pconf->pin);
-		} else {
-			LCDPR("vbyone pinmux is already released\n");
+		if (lcd_debug_print_flag) {
+			LCDPR("set vbyone pinmux %s: %p\n",
+				lcd_vbyone_pinmux_str[index], pconf->pin);
 		}
 	}
-#else
-	if (status) {
-		lcd_pinmux_clr_mask(7,
-			((1 << 1) | (1 << 2) | (1 << 9) | (1 << 10)));
-		lcd_pinmux_set_mask(7, ((1 << 11) | (1 << 12)));
-	} else {
-		lcd_pinmux_clr_mask(7, ((1 << 11) | (1 << 12)));
-	}
-#endif
+	pconf->pinmux_flag = index;
 }
 
 unsigned int lcd_lvds_channel_on_value(struct lcd_config_s *pconf)
@@ -471,12 +469,15 @@ int lcd_power_load_from_dts(struct lcd_config_s *pconf,
 				"power_on_step", j, &val);
 			lcd_power->power_on_step[i].delay = val;
 
-			/* gpio probe */
+			/* gpio/extern probe */
+			index = lcd_power->power_on_step[i].index;
 			switch (lcd_power->power_on_step[i].type) {
 			case LCD_POWER_TYPE_CPU:
-				index = lcd_power->power_on_step[i].index;
 				if (index < LCD_CPU_GPIO_NUM_MAX)
 					lcd_cpu_gpio_probe(index);
+				break;
+			case LCD_POWER_TYPE_EXTERN:
+				pconf->extern_index = index;
 				break;
 			default:
 				break;
@@ -522,12 +523,16 @@ int lcd_power_load_from_dts(struct lcd_config_s *pconf,
 				"power_off_step", j, &val);
 			lcd_power->power_off_step[i].delay = val;
 
-			/* gpio probe */
+			/* gpio/extern probe */
+			index = lcd_power->power_off_step[i].index;
 			switch (lcd_power->power_off_step[i].type) {
 			case LCD_POWER_TYPE_CPU:
-				index = lcd_power->power_off_step[i].index;
 				if (index < LCD_CPU_GPIO_NUM_MAX)
 					lcd_cpu_gpio_probe(index);
+				break;
+			case LCD_POWER_TYPE_EXTERN:
+				if (pconf->extern_index == 0xff)
+					pconf->extern_index = index;
 				break;
 			default:
 				break;
@@ -591,12 +596,15 @@ int lcd_power_load_from_unifykey(struct lcd_config_s *pconf,
 			(*(p + LCD_UKEY_PWR_DELAY + 5*i) |
 			((*(p + LCD_UKEY_PWR_DELAY + 5*i + 1)) << 8));
 
-		/* gpio probe */
+		/* gpio/extern probe */
+		index = pconf->lcd_power->power_on_step[i].index;
 		switch (pconf->lcd_power->power_on_step[i].type) {
 		case LCD_POWER_TYPE_CPU:
-			index = pconf->lcd_power->power_on_step[i].index;
 			if (index < LCD_CPU_GPIO_NUM_MAX)
 				lcd_cpu_gpio_probe(index);
+			break;
+		case LCD_POWER_TYPE_EXTERN:
+			pconf->extern_index = index;
 			break;
 		default:
 			break;
@@ -639,12 +647,16 @@ int lcd_power_load_from_unifykey(struct lcd_config_s *pconf,
 				(*(p + LCD_UKEY_PWR_DELAY + 5*j) |
 				((*(p + LCD_UKEY_PWR_DELAY + 5*j + 1)) << 8));
 
-		/* gpio probe */
+		/* gpio/extern probe */
+		index = pconf->lcd_power->power_off_step[j].index;
 		switch (pconf->lcd_power->power_off_step[j].type) {
 		case LCD_POWER_TYPE_CPU:
-			index = pconf->lcd_power->power_off_step[j].index;
 			if (index < LCD_CPU_GPIO_NUM_MAX)
 				lcd_cpu_gpio_probe(index);
+			break;
+		case LCD_POWER_TYPE_EXTERN:
+			if (pconf->extern_index == 0xff)
+				pconf->extern_index = index;
 			break;
 		default:
 			break;
@@ -665,28 +677,28 @@ int lcd_power_load_from_unifykey(struct lcd_config_s *pconf,
 	return 0;
 }
 
-void lcd_hdr_vinfo_update(void)
+void lcd_optical_vinfo_update(void)
 {
 	struct aml_lcd_drv_s *lcd_drv = aml_lcd_get_driver();
 	struct lcd_config_s *pconf;
-	struct master_display_info_s *hdr_vinfo;
+	struct master_display_info_s *disp_vinfo;
 
 	pconf = lcd_drv->lcd_config;
-	hdr_vinfo = &lcd_drv->lcd_info->master_display_info;
-	hdr_vinfo->present_flag = pconf->hdr_info.hdr_support;
-	hdr_vinfo->features = pconf->hdr_info.features;
-	hdr_vinfo->primaries[0][0] = pconf->hdr_info.primaries_g_x;
-	hdr_vinfo->primaries[0][1] = pconf->hdr_info.primaries_g_y;
-	hdr_vinfo->primaries[1][0] = pconf->hdr_info.primaries_b_x;
-	hdr_vinfo->primaries[1][1] = pconf->hdr_info.primaries_b_y;
-	hdr_vinfo->primaries[2][0] = pconf->hdr_info.primaries_r_x;
-	hdr_vinfo->primaries[2][1] = pconf->hdr_info.primaries_r_y;
-	hdr_vinfo->white_point[0] = pconf->hdr_info.white_point_x;
-	hdr_vinfo->white_point[1] = pconf->hdr_info.white_point_y;
-	hdr_vinfo->luminance[0] = pconf->hdr_info.luma_max;
-	hdr_vinfo->luminance[1] = pconf->hdr_info.luma_min;
+	disp_vinfo = &lcd_drv->lcd_info->master_display_info;
+	disp_vinfo->present_flag = pconf->optical_info.hdr_support;
+	disp_vinfo->features = pconf->optical_info.features;
+	disp_vinfo->primaries[0][0] = pconf->optical_info.primaries_g_x;
+	disp_vinfo->primaries[0][1] = pconf->optical_info.primaries_g_y;
+	disp_vinfo->primaries[1][0] = pconf->optical_info.primaries_b_x;
+	disp_vinfo->primaries[1][1] = pconf->optical_info.primaries_b_y;
+	disp_vinfo->primaries[2][0] = pconf->optical_info.primaries_r_x;
+	disp_vinfo->primaries[2][1] = pconf->optical_info.primaries_r_y;
+	disp_vinfo->white_point[0] = pconf->optical_info.white_point_x;
+	disp_vinfo->white_point[1] = pconf->optical_info.white_point_y;
+	disp_vinfo->luminance[0] = pconf->optical_info.luma_max;
+	disp_vinfo->luminance[1] = pconf->optical_info.luma_min;
 
-	lcd_drv->lcd_info->hdr_info.lumi_max = pconf->hdr_info.luma_max;
+	lcd_drv->lcd_info->hdr_info.lumi_max = pconf->optical_info.luma_max;
 }
 
 void lcd_timing_init_config(struct lcd_config_s *pconf)

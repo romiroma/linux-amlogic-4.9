@@ -22,6 +22,7 @@
 #include <linux/delay.h>
 #include <linux/dma-mapping.h>
 #include <linux/dma-contiguous.h>
+#include <linux/amlogic/media/video_sink/video.h>
 #include "../tvin_global.h"
 #include "../tvin_format_table.h"
 #include "vdin_ctl.h"
@@ -144,7 +145,7 @@ static unsigned int vpu_reg_27af = 0x3;
 #define MEAS_MUX_ISP                    8
 #define MEAS_MUX_656_B                  9
 #define MEAS_MUX_VIU1                   6
-#define MEAS_MUX_VIU2                   9
+#define MEAS_MUX_VIU2                   8
 
 #define HDMI_DE_REPEAT_DONE_FLAG	0xF0
 #define DECIMATION_REAL_RANGE		0x0F
@@ -2211,6 +2212,7 @@ void vdin_set_vframe_prop_info(struct vframe_s *vf,
 		struct vdin_dev_s *devp)
 {
 	unsigned int offset = devp->addr_offset;
+	u64 divid;
 	struct vframe_bbar_s bbar = {0};
 #ifdef CONFIG_AML_LOCAL_DIMMING
 	/*int i;*/
@@ -2407,10 +2409,10 @@ void vdin_set_vframe_prop_info(struct vframe_s *vf,
 	vf->prop.meas.vs_cycle = devp->cycle;
 	if ((vdin_ctl_dbg & (1 << 8)) &&
 		(vdin_luma_max != vf->prop.hist.luma_max)) {
-		vf->ready_clock_hist[0] = sched_clock();
+		divid = vf->ready_clock_hist[0] = sched_clock();
+		do_div(divid, 1000);
 		pr_info("vdin write done %lld us. lum_max(0x%x-->0x%x)\n",
-			vf->ready_clock_hist[0]/1000,
-			vdin_luma_max, vf->prop.hist.luma_max);
+			divid, vdin_luma_max, vf->prop.hist.luma_max);
 		vdin_luma_max = vf->prop.hist.luma_max;
 	}
 #if 0
@@ -3290,6 +3292,7 @@ void vdin_set_hvscale(struct vdin_dev_s *devp)
 	if (vdin_ctl_dbg)
 		pr_info(" dst vactive:%u.\n", devp->v_active);
 }
+
 /*set source_bitdepth
  *	base on color_depth_config:
  *		10, 8, 0, other
@@ -3297,6 +3300,17 @@ void vdin_set_hvscale(struct vdin_dev_s *devp)
 void vdin_set_bitdepth(struct vdin_dev_s *devp)
 {
 	unsigned int offset = devp->addr_offset;
+	unsigned int set_width = 0;
+
+	if ((devp->output_color_depth) &&
+		((devp->prop.fps == 50) || (devp->prop.fps == 60)) &&
+		((devp->parm.info.fmt == TVIN_SIG_FMT_HDMI_3840_2160_00HZ) ||
+		(devp->parm.info.fmt == TVIN_SIG_FMT_HDMI_4096_2160_00HZ)) &&
+		(devp->prop.colordepth == 10)) {
+		set_width = devp->output_color_depth;
+		pr_info("set output color depth %d bit from dts\n", set_width);
+	}
+
 	switch (devp->color_depth_config) {
 	case 8:
 		devp->source_bitdepth = 8;
@@ -3313,27 +3327,33 @@ void vdin_set_bitdepth(struct vdin_dev_s *devp)
 		devp->source_bitdepth is controlled by colordepth
 		change default to 10bit for 8in8out detail maybe lost
 		 */
-		if (((devp->prop.color_format == TVIN_RGB444) ||
+		if ((devp->prop.color_format == TVIN_RGB444) ||
 			(devp->prop.color_format == TVIN_YUV444) ||
 			(devp->prop.color_format == TVIN_BGGR) ||
 			(devp->prop.color_format == TVIN_RGGB) ||
 			(devp->prop.color_format == TVIN_GBRG) ||
-			(devp->prop.color_format == TVIN_GRBG)) &&
-			((devp->prop.colordepth <= 8) ||
-			is_meson_txlx_cpu())) {
-			/*txlx dmc is diff & bandwidth tension*/
+			(devp->prop.color_format == TVIN_GRBG)) {
+			devp->source_bitdepth = 8;
+			wr_bits(offset, VDIN_WR_CTRL2, 0,
+				VDIN_WR_10BIT_MODE_BIT, VDIN_WR_10BIT_MODE_WID);
+		} else if (devp->prop.colordepth == 8) {
 			devp->source_bitdepth = 8;
 			wr_bits(offset, VDIN_WR_CTRL2, 0,
 				VDIN_WR_10BIT_MODE_BIT, VDIN_WR_10BIT_MODE_WID);
 		} else if ((devp->color_depth_support &
 			VDIN_WR_COLOR_DEPTH_10BIT) &&
-			(devp->dv.dv_flag == false) &&
-			((devp->dv.dolby_input &
-				(1 << devp->index)) == false) &&
-			(is_dolby_vision_enable() == false)) {
-			devp->source_bitdepth = 10;
-			wr_bits(offset, VDIN_WR_CTRL2, 1,
-				VDIN_WR_10BIT_MODE_BIT, VDIN_WR_10BIT_MODE_WID);
+			(devp->prop.colordepth == 10)) {
+			if (set_width == 8) {
+				devp->source_bitdepth = 8;
+				wr_bits(offset, VDIN_WR_CTRL2, 0,
+					VDIN_WR_10BIT_MODE_BIT,
+					VDIN_WR_10BIT_MODE_WID);
+			} else {
+				devp->source_bitdepth = 10;
+				wr_bits(offset, VDIN_WR_CTRL2, 1,
+					VDIN_WR_10BIT_MODE_BIT,
+					VDIN_WR_10BIT_MODE_WID);
+			}
 		} else {
 			devp->source_bitdepth = 8;
 			wr_bits(offset, VDIN_WR_CTRL2, 0,
@@ -4161,10 +4181,89 @@ void vdin_set_display_ratio(struct vdin_dev_s *devp,
 	else
 		vf->ratio_control = 0x0 << DISP_RATIO_ASPECT_RATIO_BIT;
 
-	if (aspect_ratio == TVIN_ASPECT_4x3)
-		vf->ratio_control = 0xc0 << DISP_RATIO_ASPECT_RATIO_BIT;
-	else if (aspect_ratio == TVIN_ASPECT_16x9)
-		vf->ratio_control = 0x90 << DISP_RATIO_ASPECT_RATIO_BIT;
+	switch (aspect_ratio) {
+	case TVIN_ASPECT_4x3_FULL:
+		vf->pic_mode.screen_mode = VIDEO_WIDEOPTION_CUSTOM;
+		vf->pic_mode.provider = PIC_MODE_PROVIDER_WSS;
+		vf->pic_mode.hs = 0;
+		vf->pic_mode.he = 0;
+		vf->pic_mode.vs = 0;
+		vf->pic_mode.ve = 0;
+		/* 3*256/4=0xc0 */
+		vf->pic_mode.custom_ar = 0xc0;
+		vf->ratio_control |= DISP_RATIO_ADAPTED_PICMODE;
+		break;
+	case TVIN_ASPECT_14x9_FULL:
+		vf->pic_mode.screen_mode = VIDEO_WIDEOPTION_CUSTOM;
+		vf->pic_mode.provider = PIC_MODE_PROVIDER_WSS;
+		vf->pic_mode.hs = 0;
+		vf->pic_mode.he = 0;
+		vf->pic_mode.vs = 0;
+		vf->pic_mode.ve = 0;
+		/* 9*256/14=0xc0 */
+		vf->pic_mode.custom_ar = 0xa4;
+		vf->ratio_control |= DISP_RATIO_ADAPTED_PICMODE;
+		break;
+	case TVIN_ASPECT_16x9_FULL:
+		vf->pic_mode.screen_mode = VIDEO_WIDEOPTION_CUSTOM;
+		vf->pic_mode.provider = PIC_MODE_PROVIDER_WSS;
+		vf->pic_mode.hs = 0;
+		vf->pic_mode.he = 0;
+		vf->pic_mode.vs = 0;
+		vf->pic_mode.ve = 0;
+		/* 9*256/16=0xc0 */
+		vf->pic_mode.custom_ar = 0x90;
+		vf->ratio_control |= DISP_RATIO_ADAPTED_PICMODE;
+		break;
+	case TVIN_ASPECT_14x9_LB_CENTER:
+		/**720/462=14/9;(576-462)/2=57;57/2=28**/
+		/**need cut more**/
+		vf->pic_mode.screen_mode = VIDEO_WIDEOPTION_CUSTOM;
+		vf->pic_mode.provider = PIC_MODE_PROVIDER_WSS;
+		vf->pic_mode.hs = 0;
+		vf->pic_mode.he = 0;
+		vf->pic_mode.vs = 36;
+		vf->pic_mode.ve = 36;
+		vf->pic_mode.custom_ar = 0xa4;
+		vf->ratio_control |= DISP_RATIO_ADAPTED_PICMODE;
+		break;
+	case TVIN_ASPECT_14x9_LB_TOP:
+		/**720/462=14/9;(576-462)/2=57**/
+		vf->pic_mode.screen_mode = VIDEO_WIDEOPTION_CUSTOM;
+		vf->pic_mode.provider = PIC_MODE_PROVIDER_WSS;
+		vf->pic_mode.hs = 0;
+		vf->pic_mode.he = 0;
+		vf->pic_mode.vs = 0;
+		vf->pic_mode.ve = 57;
+		vf->pic_mode.custom_ar = 0xa4;
+		vf->ratio_control |= DISP_RATIO_ADAPTED_PICMODE;
+		break;
+	case TVIN_ASPECT_16x9_LB_CENTER:
+		/**720/405=16/9;(576-405)/2=85;85/2=42**/
+		/**need cut more**/
+		vf->pic_mode.screen_mode = VIDEO_WIDEOPTION_CUSTOM;
+		vf->pic_mode.provider = PIC_MODE_PROVIDER_WSS;
+		vf->pic_mode.hs = 0;
+		vf->pic_mode.he = 0;
+		vf->pic_mode.vs = 70;
+		vf->pic_mode.ve = 70;
+		vf->pic_mode.custom_ar = 0x90;
+		vf->ratio_control |= DISP_RATIO_ADAPTED_PICMODE;
+		break;
+	case TVIN_ASPECT_16x9_LB_TOP:
+		/**720/405=16/9;(576-405)/2=85**/
+		vf->pic_mode.screen_mode = VIDEO_WIDEOPTION_CUSTOM;
+		vf->pic_mode.provider = PIC_MODE_PROVIDER_WSS;
+		vf->pic_mode.hs = 0;
+		vf->pic_mode.he = 0;
+		vf->pic_mode.vs = 0;
+		vf->pic_mode.ve = 85;
+		vf->pic_mode.custom_ar = 0x90;
+		vf->ratio_control |= DISP_RATIO_ADAPTED_PICMODE;
+		break;
+	default:
+		break;
+	}
 }
 
 /*function:set source bitdepth

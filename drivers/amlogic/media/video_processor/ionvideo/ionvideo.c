@@ -128,6 +128,22 @@ static int vidioc_s_ctrl(struct file *file, void *priv,
 	return 0;
 }
 
+static int vidioc_g_parm(struct file *file, void *priv,
+				struct v4l2_streamparm *parms)
+{
+	struct ionvideo_dev *dev = video_drvdata(file);
+	struct v4l2_amlogic_parm *ap
+		= (struct v4l2_amlogic_parm *)&parms->parm.capture;
+
+	if (parms->type != V4L2_BUF_TYPE_VIDEO_CAPTURE)
+		return -EINVAL;
+
+	memset(ap, 0, sizeof(struct v4l2_amlogic_parm));
+	*ap = dev->am_parm;
+
+	return 0;
+}
+
 static const struct ionvideo_fmt *__get_format(u32 pixelformat)
 {
 	const struct ionvideo_fmt *fmt;
@@ -318,6 +334,9 @@ static int ionvideo_fillbuff(struct ionvideo_dev *dev,
 		dev->wait_ge2d_timeout = false;
 		videoc_omx_compute_pts(dev, vf);
 		buf->timecode.frames = 0;
+		dev->am_parm.signal_type = vf->signal_type;
+		dev->am_parm.master_display_colour
+				= vf->prop.master_display_colour;
 		vf_put(vf, dev->vf_receiver_name);
 		buf->timestamp.tv_sec = dev->pts >> 32;
 		buf->timestamp.tv_usec = dev->pts & 0xFFFFFFFF;
@@ -361,6 +380,9 @@ static void ionvideo_thread_tick(struct ionvideo_dev *dev)
 	}
 
 	if (dev->active_state == ION_INACTIVE)
+		return;
+
+	if (dev->receiver_register == 0)
 		return;
 
 	dev->wait_ge2d_timeout = false;
@@ -876,6 +898,7 @@ static const struct v4l2_ioctl_ops ionvideo_ioctl_ops = {
 	.vidioc_streamon = vidioc_streamon,
 	.vidioc_streamoff = vidioc_streamoff,
 	.vidioc_s_ctrl = vidioc_s_ctrl,
+	.vidioc_g_parm = vidioc_g_parm,
 };
 
 static const struct video_device ionvideo_template = {
@@ -941,15 +964,14 @@ static int video_receiver_event_fun(int type, void *data, void *private_data)
 		}
 
 		/*tsync_avevent(VIDEO_STOP, 0);*/
-		IONVID_DBG("unreg:ionvideo\n");
+		pr_info("unreg:ionvideo\n");
 	} else if (type == VFRAME_EVENT_PROVIDER_REG) {
-		dev->receiver_register = 1;
 		dev->is_omx_video_started = 1;
 		dev->ppmgr2_dev.interlaced_num = 0;
 		dev->active_state = ION_ACTIVE;
 		init_completion(&dev->inactive_done);
-
-		IONVID_DBG("reg:ionvideo\n");
+		dev->receiver_register = 1;
+		pr_info("reg:ionvideo\n");
 	} else if (type == VFRAME_EVENT_PROVIDER_QUREY_STATE) {
 		if (dev->vf_wait_cnt > 1)
 			return RECEIVER_INACTIVE;
@@ -1314,6 +1336,7 @@ static const struct of_device_id ionvideo_dt_match[] = {
 	{
 		.compatible = "amlogic, ionvideo",
 	},
+	{}
 };
 
 /* general interface for a linux driver .*/

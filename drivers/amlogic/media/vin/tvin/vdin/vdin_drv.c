@@ -1140,6 +1140,12 @@ static void vdin_backup_histgram(struct vframe_s *vf, struct vdin_dev_s *devp)
 		devp->parm.histgram[i] = vf->prop.hist.gamma[i];
 }
 
+static u64 func_div(u64 cur, u32 divid)
+{
+	do_div(cur, divid);
+	return cur;
+}
+
 /*
  *VDIN_FLAG_RDMA_ENABLE=1
  *	provider_vf_put(devp->last_wr_vfe, devp->vfp);
@@ -1163,6 +1169,7 @@ irqreturn_t vdin_isr(int irq, void *dev_id)
 	unsigned int offset = 0, vf_drop_cnt = 0;
 	enum tvin_trans_fmt trans_fmt;
 	struct tvin_sig_property_s *prop, *pre_prop;
+	long long *clk_array;
 
 	/* debug interrupt interval time
 	 *
@@ -1241,9 +1248,10 @@ irqreturn_t vdin_isr(int irq, void *dev_id)
 			if (time_en) {
 				devp->last_wr_vfe->vf.ready_clock[1] =
 					sched_clock();
-				pr_info("vdin put latency %lld us. first %lld us.\n",
-				devp->last_wr_vfe->vf.ready_clock[1]/1000,
-				devp->last_wr_vfe->vf.ready_clock[0]/1000);
+				clk_array = devp->last_wr_vfe->vf.ready_clock;
+				pr_info("vdin put latency %lld us, first %lld us.\n",
+					func_div(*(clk_array + 1), 1000),
+					func_div(*clk_array, 1000));
 			}
 		} else {
 			devp->vdin_irq_flag = 15;
@@ -1482,9 +1490,10 @@ irqreturn_t vdin_isr(int irq, void *dev_id)
 			provider_vf_put(curr_wr_vfe, devp->vfp);
 			if (vdin_dbg_en) {
 				curr_wr_vfe->vf.ready_clock[1] = sched_clock();
-				pr_info("vdin put latency %lld us. first %lld us.\n",
-					curr_wr_vfe->vf.ready_clock[1]/1000,
-					curr_wr_vfe->vf.ready_clock[0]/1000);
+				clk_array = curr_wr_vfe->vf.ready_clock;
+				pr_info("vdin put latency %lld us, first %lld us.\n",
+					func_div(*(clk_array + 1), 1000),
+					func_div(*clk_array, 1000));
 			}
 		} else {
 			devp->vdin_irq_flag = 15;
@@ -2204,6 +2213,19 @@ static long vdin_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		}
 		pr_info("force color range-%d\n\n", color_range_force);
 		break;
+	case TVIN_IOC_SET_AUTO_RATIO_EN:
+		if (devp->index != 0)
+			break;
+		if (copy_from_user(&(devp->auto_ratio_en),
+			argp, sizeof(unsigned int))) {
+			ret = -EFAULT;
+			break;
+		}
+		if (vdin_dbg_en) {
+			pr_info("TVIN_IOC_SET_AUTO_RATIO_EN(%d) done\n\n",
+				devp->auto_ratio_en);
+		}
+		break;
 	default:
 		ret = -ENOIOCTLCMD;
 	/* pr_info("%s %d is not supported command\n", __func__, cmd); */
@@ -2211,6 +2233,7 @@ static long vdin_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	}
 	return ret;
 }
+
 #ifdef CONFIG_COMPAT
 static long vdin_compat_ioctl(struct file *file, unsigned int cmd,
 	unsigned long arg)
@@ -2307,6 +2330,15 @@ static void vdin_delete_device(int minor)
 	dev_t devno = MKDEV(MAJOR(vdin_devno), minor);
 	device_destroy(vdin_clsp, devno);
 }
+
+struct vdin_dev_s *vdin_get_dev(unsigned int index)
+{
+	if (index)
+		return vdin_devp[1];
+	else
+		return vdin_devp[0];
+}
+
 static int vdin_drv_probe(struct platform_device *pdev)
 {
 	int ret = 0;
@@ -2421,8 +2453,16 @@ static int vdin_drv_probe(struct platform_device *pdev)
 	if (ret)
 		pr_info("no bit mode found, set 8bit as default\n");
 
-	vdevp->color_depth_support = bit_mode;
+	vdevp->color_depth_support = bit_mode & 0xff;
 	vdevp->color_depth_config = 0;
+
+	ret = (bit_mode >> 8) & 0xff;
+	if (ret == 0)
+		vdevp->output_color_depth = 0;
+	else if (ret == 1)
+		vdevp->output_color_depth = 8;
+	else if (ret == 2)
+		vdevp->output_color_depth = 10;
 
 	if (vdevp->color_depth_support&VDIN_WR_COLOR_DEPTH_10BIT_FULL_PCAK_MODE)
 		vdevp->color_depth_mode = 1;
@@ -2544,7 +2584,7 @@ static int vdin_drv_probe(struct platform_device *pdev)
 	/*enable auto cutwindow for atv*/
 	if (vdevp->index == 0) {
 		vdevp->auto_cutwindow_en = 1;
-		vdevp->auto_ratio_en = 1;
+		vdevp->auto_ratio_en = 0;
 		#ifdef CONFIG_CMA
 		vdevp->cma_mem_mode = 1;
 		#endif
@@ -2555,6 +2595,7 @@ static int vdin_drv_probe(struct platform_device *pdev)
 	vdevp->canvas_config_mode = canvas_config_mode;
 	INIT_DELAYED_WORK(&vdevp->dv.dv_dwork, vdin_dv_dwork);
 
+	vdin_debugfs_init(vdevp);/*2018-07-18 add debugfs*/
 	pr_info("%s: driver initialized ok\n", __func__);
 	return 0;
 
@@ -2586,6 +2627,7 @@ static int vdin_drv_remove(struct platform_device *pdev)
 #endif
 	mutex_destroy(&vdevp->fe_lock);
 
+	vdin_debugfs_exit(vdevp);/*2018-07-18 add debugfs*/
 	vf_pool_free(vdevp->vfp);
 	vdin_remove_device_files(vdevp->dev);
 	vdin_delete_device(vdevp->index);

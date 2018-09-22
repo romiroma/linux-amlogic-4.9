@@ -640,13 +640,11 @@ static void tvafe_cvd2_non_std_config(struct tvafe_cvd2_s *cvd2)
 		if ((cvd2->vd_port == TVIN_PORT_CVBS3) ||
 			(cvd2->vd_port == TVIN_PORT_CVBS0)) {
 
-#if ((defined CONFIG_AM_R840) || (defined CONFIG_AM_MXL661))
+			/*config 0 for tuner R840/mxl661*/
+			/*si2151 si2159 r842 may need set 1*/
 			W_APB_BIT(CVD2_VSYNC_SIGNAL_THRESHOLD, 0,
 				VS_SIGNAL_AUTO_TH_BIT, VS_SIGNAL_AUTO_TH_WID);
-#else
-			W_APB_BIT(CVD2_VSYNC_SIGNAL_THRESHOLD, 1,
-				VS_SIGNAL_AUTO_TH_BIT, VS_SIGNAL_AUTO_TH_WID);
-#endif
+
 			/* vsync signal is not good */
 			W_APB_REG(CVD2_NOISE_THRESHOLD, 0x00);
 
@@ -2204,7 +2202,8 @@ inline void tvafe_cvd2_adj_hs(struct tvafe_cvd2_s *cvd2,
 			unsigned int hcnt64)
 {
 	unsigned int hcnt64_max, hcnt64_min, temp, delta;
-	unsigned int diff, hcnt64_ave, i, hcnt64_standard;
+	unsigned int diff, hcnt64_ave, i;
+	unsigned int hcnt64_standard = 0;
 
 	if (tvafe_cpu_type() >= CPU_TYPE_GXTVBB) {
 		if (cvd2->config_fmt == TVIN_SIG_FMT_CVBS_PAL_I)
@@ -2631,6 +2630,7 @@ void tvafe_snow_config_acd(void)
 	/*0x8e035e is debug test result*/
 	if (acd_h_config)
 		W_APB_REG(ACD_REG_2D, acd_h_config);
+	acd_h = acd_h_back;
 }
 /*only for pal-i*/
 void tvafe_snow_config_acd_resume(void)
@@ -2647,15 +2647,30 @@ enum tvin_aspect_ratio_e tvafe_cvd2_get_wss(void)
 	unsigned int full_format = 0;
 	enum tvin_aspect_ratio_e aspect_ratio = TVIN_ASPECT_NULL;
 
-	full_format = R_APB_BIT(CVD2_VBI_WSS_DATA1, 0, 4);
-	if (full_format == 0x8)
-		aspect_ratio = TVIN_ASPECT_4x3;
-	else if (full_format == 0x7)
-		aspect_ratio = TVIN_ASPECT_16x9;
+	full_format = R_APB_REG(CVD2_VBI_WSS_DATA1);
+
+	if (full_format == TVIN_AR_14x9_LB_CENTER_VAL)
+		aspect_ratio = TVIN_ASPECT_14x9_LB_CENTER;
+	else if (full_format == TVIN_AR_14x9_LB_TOP_VAL)
+		aspect_ratio = TVIN_ASPECT_14x9_LB_TOP;
+	else if (full_format == TVIN_AR_16x9_LB_TOP_VAL)
+		aspect_ratio = TVIN_ASPECT_16x9_LB_TOP;
+	else if (full_format == TVIN_AR_16x9_FULL_VAL)
+		aspect_ratio = TVIN_ASPECT_16x9_FULL;
+	else if (full_format == TVIN_AR_4x3_FULL_VAL)
+		aspect_ratio = TVIN_ASPECT_4x3_FULL;
+	else if (full_format == TVIN_AR_16x9_LB_CENTER_VAL)
+		aspect_ratio = TVIN_ASPECT_16x9_LB_CENTER;
+	else if (full_format == TVIN_AR_16x9_LB_CENTER1_VAL)
+		aspect_ratio = TVIN_ASPECT_16x9_LB_CENTER;
+	else if (full_format == TVIN_AR_14x9_FULL_VAL)
+		aspect_ratio = TVIN_ASPECT_14x9_FULL;
 	else
 		aspect_ratio = TVIN_ASPECT_NULL;
+
 	return aspect_ratio;
 }
+
 /*only for develop debug*/
 #ifdef TVAFE_CVD_DEBUG
 module_param(hs_adj_th_level0, uint, 0664);

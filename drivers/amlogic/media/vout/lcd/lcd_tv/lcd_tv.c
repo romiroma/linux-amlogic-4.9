@@ -260,7 +260,7 @@ static void lcd_vmode_vinfo_update(enum vmode_e mode)
 		break;
 	}
 
-	lcd_hdr_vinfo_update();
+	lcd_optical_vinfo_update();
 }
 
 /* ************************************************** *
@@ -391,7 +391,7 @@ static int lcd_vout_get_state(void)
 	return lcd_vout_state;
 }
 
-#ifdef CONFIG_AML_VOUT_FRAMERATE_AUTOMATION
+#ifdef CONFIG_AMLOGIC_VOUT_SERVE
 struct lcd_vframe_match_s {
 	int fps;
 	int frame_rate; /* *100 */
@@ -461,7 +461,7 @@ static int lcd_framerate_automation_set_mode(void)
 
 static int lcd_set_vframe_rate_hint(int duration)
 {
-#ifdef CONFIG_AML_VOUT_FRAMERATE_AUTOMATION
+#ifdef CONFIG_AMLOGIC_VOUT_SERVE
 	struct aml_lcd_drv_s *lcd_drv = aml_lcd_get_driver();
 	struct vinfo_s *info;
 	int fr_policy;
@@ -474,7 +474,7 @@ static int lcd_set_vframe_rate_hint(int duration)
 		LCDPR("vout_serve bypass\n");
 		return 0;
 	}
-	if (lcd_drv->lcd_status == 0) {
+	if ((lcd_drv->lcd_status & LCD_STATUS_ENCL_ON) == 0) {
 		LCDPR("%s: lcd is disabled, exit\n", __func__);
 		return 0;
 	}
@@ -500,7 +500,7 @@ static int lcd_set_vframe_rate_hint(int duration)
 			__func__, fr_policy);
 		return 0;
 	}
-	fps = get_vsource_fps(duration);
+	fps = vout_get_vsource_fps(duration);
 	for (i = 0; i < n; i++) {
 		if (fps == vtable[i].fps) {
 			frame_rate = vtable[i].frame_rate;
@@ -529,7 +529,7 @@ static int lcd_set_vframe_rate_hint(int duration)
 
 static int lcd_set_vframe_rate_end_hint(void)
 {
-#ifdef CONFIG_AML_VOUT_FRAMERATE_AUTOMATION
+#ifdef CONFIG_AMLOGIC_VOUT_SERVE
 	struct aml_lcd_drv_s *lcd_drv = aml_lcd_get_driver();
 	struct vinfo_s *info;
 
@@ -537,7 +537,7 @@ static int lcd_set_vframe_rate_end_hint(void)
 		LCDPR("vout_serve bypass\n");
 		return 0;
 	}
-	if (lcd_drv->lcd_status == 0) {
+	if ((lcd_drv->lcd_status & LCD_STATUS_ENCL_ON) == 0) {
 		LCDPR("%s: lcd is disabled, exit\n", __func__);
 		return 0;
 	}
@@ -565,7 +565,7 @@ static int lcd_set_vframe_rate_end_hint(void)
 
 static int lcd_set_vframe_rate_policy(int policy)
 {
-#ifdef CONFIG_AML_VOUT_FRAMERATE_AUTOMATION
+#ifdef CONFIG_AMLOGIC_VOUT_SERVE
 	struct aml_lcd_drv_s *lcd_drv = aml_lcd_get_driver();
 
 	if (lcd_vout_serve_bypass) {
@@ -580,7 +580,7 @@ static int lcd_set_vframe_rate_policy(int policy)
 
 static int lcd_get_vframe_rate_policy(void)
 {
-#ifdef CONFIG_AML_VOUT_FRAMERATE_AUTOMATION
+#ifdef CONFIG_AMLOGIC_VOUT_SERVE
 	struct aml_lcd_drv_s *lcd_drv = aml_lcd_get_driver();
 
 	return lcd_drv->fr_auto_policy;
@@ -775,9 +775,10 @@ static int lcd_init_load_from_dts(struct lcd_config_s *pconf,
 	int ret = 0;
 	struct aml_lcd_drv_s *lcd_drv = aml_lcd_get_driver();
 
+	/* lock pinmux if lcd in on */
 	switch (pconf->lcd_basic.lcd_type) {
 	case LCD_VBYONE:
-		if (lcd_drv->lcd_status) /* lock pinmux if lcd in on */
+		if (lcd_drv->lcd_status & LCD_STATUS_IF_ON)
 			lcd_vbyone_pinmux_set(1);
 		break;
 	default:
@@ -1393,7 +1394,6 @@ int lcd_tv_probe(struct device *dev)
 	int ret;
 
 	memset(lcd_output_name, 0, sizeof(lcd_output_name));
-	lcd_drv->version = LCD_DRV_VERSION;
 	lcd_drv->driver_init_pre = lcd_tv_driver_init_pre;
 	lcd_drv->driver_disable_post = lcd_tv_driver_disable_post;
 	lcd_drv->driver_init = lcd_tv_driver_init;
