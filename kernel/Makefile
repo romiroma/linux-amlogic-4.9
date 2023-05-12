@@ -29,6 +29,9 @@ KCOV_INSTRUMENT_extable.o := n
 KCOV_INSTRUMENT_kcov.o := n
 KASAN_SANITIZE_kcov.o := n
 
+#silence alias errors:
+#KBUILD_CFLAGS = $(call cc-disable-warning, attribute-alias)
+
 # cond_syscall is currently not LTO compatible
 CFLAGS_sys_ni.o = $(DISABLE_LTO)
 

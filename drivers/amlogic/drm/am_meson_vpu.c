@@ -20,7 +20,6 @@
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_fb_cma_helper.h>
 #include <drm/drm_gem_cma_helper.h>
-
 #include <linux/platform_device.h>
 #include <linux/of_device.h>
 #include <linux/of.h>
@@ -40,6 +39,7 @@
 #ifdef CONFIG_DRM_MESON_USE_ION
 #include "am_meson_fb.h"
 #endif
+#include "am_meson_drv.h"
 #include "am_meson_vpu.h"
 
 /*

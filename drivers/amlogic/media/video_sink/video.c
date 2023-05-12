@@ -880,7 +880,7 @@ static u32 next_rdma_canvas_id = 1;
 static struct vframe_s *dispbuf_to_put[DISPBUF_TO_PUT_MAX];
 static int dispbuf_to_put_num;
 #else
-static u32 disp_canvas_index[6] = {
+u32 disp_canvas_index[6] = {
 	DISPLAY_CANVAS_BASE_INDEX,
 	DISPLAY_CANVAS_BASE_INDEX + 1,
 	DISPLAY_CANVAS_BASE_INDEX + 2,

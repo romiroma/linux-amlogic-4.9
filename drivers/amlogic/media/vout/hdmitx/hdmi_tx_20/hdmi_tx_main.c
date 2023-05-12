@@ -4047,7 +4047,7 @@ static int amhdmitx_probe(struct platform_device *pdev)
 #ifdef CONFIG_AMLOGIC_LEGACY_EARLY_SUSPEND
 	register_early_suspend(&hdmitx_early_suspend_handler);
 #endif
-	hdmitx_device.nb.notifier_call = hdmitx_reboot_notifier;
+	/*  hdmitx_device.nb.notifier_call = hdmitx_reboot_notifier; */
 	register_reboot_notifier(&hdmitx_device.nb);
 
 	vout_register_server(&hdmitx_vout_server);

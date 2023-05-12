@@ -15,6 +15,31 @@ NAME = Roaring Lionus
 # o Look for make include files relative to root of kernel src
 MAKEFLAGS += -rR --include-dir=$(CURDIR)
 
+KCFLAGS += $(call cc-disable-warning, attribute-alias)
+KCFLAGS += $(call cc-disable-warning, sizeof-pointer-memaccess)
+KCFLAGS += $(call cc-disable-warning, stringop-overflow)
+KCFLAGS += $(call cc-disable-warning, packed-not-aligned)
+KCFLAGS += $(call cc-disable-warning, missing-attributes)
+KCFLAGS += $(call cc-disable-warning, builtin-declaration-mismatch)
+KCFLAGS += $(call cc-disable-warning, stringop-truncation)
+KCFLAGS += $(call cc-disable-warning, address-of-packed-member)
+KCFLAGS += $(call cc-disable-warning, maybe-uninitialized)
+KCFLAGS += $(call cc-disable-warning, pointer-to-int-cast)
+KCFLAGS += $(call cc-disable-warning, zero-length-bounds)
+KCFLAGS += $(call cc-disable-warning, format)
+KCFLAGS += $(call cc-disable-warning, switch-unreachable)
+KCFLAGS += $(call cc-disable-warning, unused-variable)
+KCFLAGS += $(call cc-disable-warning, unused-function)
+KCFLAGS += $(call cc-disable-warning, restrict)
+KCFLAGS += $(call cc-disable-warning, stack-usage)
+KCFLAGS += $(call cc-disable-warning, implicit-function-declaration)
+KCFLAGS += $(call cc-disable-warning, frame-larger-than)
+KCFLAGS += $(call cc-disable-warning, bool-compare)
+KCFLAGS += $(call cc-disable-warning, bool-operation)
+KCFLAGS += $(call cc-disable-warning, int-to-pointer-cast)
+KCFLAGS += $(call cc-disable-warning, int-conversion)
+KCFLAGS += $(call cc-disable-warning, array-bounds)
+KCFLAGS += $(call cc-disable-warning, uninitialized)
 # Avoid funny character set dependencies
 unexport LC_ALL
 LC_COLLATE=C
@@ -254,7 +279,7 @@ SUBARCH := $(shell uname -m | sed -e s/i.86/x86/ -e s/x86_64/x86/ \
 # "make" in the configured kernel build directory always uses that.
 # Default value for CROSS_COMPILE is not to prefix executables
 # Note: Some architectures assign CROSS_COMPILE in their arch/*/Makefile
-ARCH		?= $(SUBARCH)
+ARCH		?= arm64
 CROSS_COMPILE	?= $(CONFIG_CROSS_COMPILE:"%"=%)
 
 # Architecture as present in compile.h
@@ -303,7 +328,7 @@ CONFIG_SHELL := $(shell if [ -x "$$BASH" ]; then echo $$BASH; \
 
 HOSTCC       = gcc
 HOSTCXX      = g++
-HOSTCFLAGS   := -Wall -Wmissing-prototypes -Wstrict-prototypes -O2 -fomit-frame-pointer -std=gnu89
+HOSTCFLAGS   := -Wall -Wmissing-prototypes -Wstrict-prototypes -O2 -fomit-frame-pointer -std=gnu89 -DARCH_NATIVE=true -mtune=cortex-a53 -mfix-cortex-a53-843419
 HOSTCXXFLAGS = -O2
 
 ifeq ($(shell $(HOSTCC) -v 2>&1 | grep -c "clang version"), 1)
@@ -746,7 +771,7 @@ KBUILD_CFLAGS += $(call cc-option,-fno-reorder-blocks,) \
 endif
 
 ifneq ($(CONFIG_FRAME_WARN),0)
-KBUILD_CFLAGS += $(call cc-option,-Wframe-larger-than=${CONFIG_FRAME_WARN})
+#KBUILD_CFLAGS += $(call cc-option,-Wframe-larger-than=${CONFIG_FRAME_WARN})
 endif
 
 # This selects the stack protector compiler flag. Testing it is delayed

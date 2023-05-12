@@ -17,6 +17,8 @@
 
 #ifndef VIDEO_PRIV_HEADER_HH
 #define VIDEO_PRIV_HEADER_HH
+#endif
+
 #define DEBUG_FLAG_BLACKOUT     0x1
 #define DEBUG_FLAG_PRINT_TOGGLE_FRAME 0x2
 #define DEBUG_FLAG_PRINT_RDMA                0x4
@@ -58,6 +60,9 @@ u32 get_video_enabled(void);
 int ext_frame_capture_poll(int endflags);
 #endif
 
+#ifdef CONFIG_AMLOGIC_MEDIA_VSYNC_RDMA
 extern u32 disp_canvas_index[2][6];
+#else
+extern u32 disp_canvas_index[6];
 #endif
 /*VIDEO_PRIV_HEADER_HH*/

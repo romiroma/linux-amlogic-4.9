@@ -15,9 +15,10 @@
  *
  */
 
+
 #ifndef _wifi_dt_h_
 #define _wifi_dt_h_
-
+#include <linux/pci.h>
 extern void sdio_reinit(void);
 extern char *get_wifi_inf(void);
 
